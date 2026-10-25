@@ -1,0 +1,9 @@
+# NEVER commit signing keys
+*.rsa
+.abuild/
+# build output
+*.iso
+*.tar.gz
+ittyos-work/
+iso/
+out/

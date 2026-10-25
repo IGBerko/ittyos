@@ -1,0 +1,177 @@
+#!/bin/sh
+# flowkit - package manager of ittyOS (apk frontend + ClamAV antivirus)
+
+FK_VERSION="1.0"
+FK_ARCH="cmp86_64"
+APK="${FLOWKIT_APK:-/sbin/apk}"
+CLAMDB="/var/lib/clamav"
+
+if [ -t 1 ]; then
+	R=$(printf '\033[0m'); B=$(printf '\033[1m'); CY=$(printf '\033[36m')
+	GR=$(printf '\033[32m'); RD=$(printf '\033[31m'); YL=$(printf '\033[33m')
+else
+	R=; B=; CY=; GR=; RD=; YL=
+fi
+
+info() { printf '%s==>%s %s\n' "$CY" "$R" "$*"; }
+ok()   { printf '%s ok%s %s\n' "$GR" "$R" "$*"; }
+warn() { printf '%s !!%s %s\n' "$YL" "$R" "$*" >&2; }
+die()  { printf '%serror:%s %s\n' "$RD" "$R" "$*" >&2; exit 1; }
+
+need_root() { [ "$(id -u)" = 0 ] || die "root privileges required (run as root or via sudo)"; }
+
+version() { echo "flowkit $FK_VERSION, $FK_ARCH"; }
+
+usage() {
+	cat <<EOF
+${B}flowkit $FK_VERSION${R} - package manager of ittyOS
+
+${B}Usage:${R} flowkit <command> [options]
+
+${CY}Packages${R}
+  -i, install, add <pkg...>   install packages (virus-checked first)
+        --no-scan             install without the virus check
+  -r, remove, del <pkg...>    remove packages
+  -s, search <query>          search packages
+  -l, list [-a]               installed packages (-a: all available)
+      info <pkg>              package details
+      update                  refresh repository indexes
+      upgrade                 upgrade installed packages
+
+${CY}Antivirus (ClamAV)${R}
+      scan [path]             scan a path (default: /)
+      av install              install ClamAV
+      av update               download virus databases
+      av status               antivirus status
+
+${CY}Other${R}
+  -v, --version               show flowkit version
+  -h, --help                  show this help
+
+Any other command is passed to apk unchanged.
+EOF
+}
+
+have_av() { command -v clamscan >/dev/null 2>&1; }
+have_db() {
+	for f in "$CLAMDB"/*.cvd "$CLAMDB"/*.cld; do
+		[ -e "$f" ] && return 0
+	done
+	return 1
+}
+
+# Downloads packages (with dependencies) to a temp dir and scans them with ClamAV.
+scan_packages() {
+	if ! have_av; then
+		warn "antivirus not installed (flowkit av install), check skipped"
+		return 0
+	fi
+	if ! have_db; then
+		warn "virus databases not downloaded (flowkit av update), check skipped"
+		return 0
+	fi
+	tmp=$(mktemp -d /tmp/flowkit.XXXXXX) || return 0
+	info "scanning packages for viruses..."
+	if ! "$APK" fetch -R -o "$tmp" "$@" >/dev/null 2>&1; then
+		rm -rf "$tmp"
+		warn "could not download packages for scanning, check skipped"
+		return 0
+	fi
+	clamscan -r --infected --no-summary "$tmp"
+	rc=$?
+	rm -rf "$tmp"
+	case $rc in
+		0) ok "no threats found" ;;
+		1) die "virus found, installation cancelled" ;;
+		*) warn "antivirus failed (code $rc), check skipped" ;;
+	esac
+	return 0
+}
+
+cmd_install() {
+	need_root
+	scan=1
+	cnt=$#; i=0
+	while [ "$i" -lt "$cnt" ]; do
+		a=$1; shift; i=$((i + 1))
+		case $a in
+			--no-scan) scan=0 ;;
+			*) set -- "$@" "$a" ;;
+		esac
+	done
+	[ $# -gt 0 ] || die "specify a package: flowkit -i <package>"
+	if [ "$scan" = 1 ]; then
+		names=
+		for a in "$@"; do
+			case $a in -*) ;; *) names="$names $a" ;; esac
+		done
+		# shellcheck disable=SC2086
+		[ -n "$names" ] && scan_packages $names
+	fi
+	exec "$APK" add "$@"
+}
+
+cmd_scan() {
+	have_av || die "antivirus not installed: flowkit av install"
+	have_db || die "virus databases not downloaded: flowkit av update"
+	target="${1:-/}"
+	info "scanning $target"
+	exec clamscan -r -i \
+		--exclude-dir='^/proc' --exclude-dir='^/sys' \
+		--exclude-dir='^/dev' --exclude-dir='^/run' "$target"
+}
+
+cmd_av() {
+	sub="${1:-status}"; [ $# -gt 0 ] && shift
+	case "$sub" in
+		install)
+			need_root
+			info "installing ClamAV"
+			"$APK" add clamav freshclam || die "could not install ClamAV"
+			ok "done. Next: flowkit av update"
+			;;
+		update)
+			need_root
+			command -v freshclam >/dev/null 2>&1 || die "freshclam not found: flowkit av install"
+			mem=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)
+			[ "${mem:-0}" -lt 1500 ] && warn "less than 1.5 GB RAM: ClamAV databases are large, memory may run out"
+			mkdir -p "$CLAMDB"
+			info "downloading virus databases"
+			exec freshclam
+			;;
+		status)
+			printf '%sClamAV antivirus%s\n' "$B" "$R"
+			if have_av; then
+				printf '  program   : %s\n' "$(clamscan --version 2>/dev/null | head -n 1)"
+			else
+				printf '  program   : not installed (flowkit av install)\n'
+			fi
+			if have_db; then
+				printf '  databases : %s\n' "$(ls "$CLAMDB" 2>/dev/null | grep -E '\.c[vl]d$' | tr '\n' ' ')"
+			else
+				printf '  databases : not downloaded (flowkit av update)\n'
+			fi
+			;;
+		*) die "unknown command: av $sub (install, update, status)" ;;
+	esac
+}
+
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+
+case "$cmd" in
+	""|-h|--help|help) usage ;;
+	-v|-V|--version|version) version ;;
+	-i|install|add) cmd_install "$@" ;;
+	-r|remove|del) need_root; exec "$APK" del "$@" ;;
+	-s|search) exec "$APK" search -v "$@" ;;
+	-l|list)
+		case "${1:-}" in
+			-a|--all) shift; exec "$APK" list "$@" ;;
+			*) exec "$APK" list -I "$@" ;;
+		esac
+		;;
+	scan) cmd_scan "$@" ;;
+	av|antivirus) cmd_av "$@" ;;
+	*) exec "$APK" "$cmd" "$@" ;;
+esac

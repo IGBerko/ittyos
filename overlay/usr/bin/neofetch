@@ -1,0 +1,89 @@
+#!/bin/sh
+# neofetch for ittyOS (lightweight, pure sh)
+
+case "${1:-}" in
+	-h|--help) echo "neofetch - system information for ittyOS"; exit 0 ;;
+esac
+
+# shellcheck disable=SC1091
+[ -r /etc/os-release ] && . /etc/os-release
+
+E=$(printf '\033')
+if [ -t 1 ]; then
+	RST="${E}[0m"; C1="${E}[36m"; C2="${E}[1;36m"; BD="${E}[1m"
+else
+	RST=; C1=; C2=; BD=
+fi
+
+user=$(id -un 2>/dev/null)
+host=$(hostname 2>/dev/null)
+os="${PRETTY_NAME:-Linux}"
+kernel=$(uname -sr)
+arch=$(uname -m)
+
+up=$(awk '{s=int($1); d=int(s/86400); h=int((s%86400)/3600); m=int((s%3600)/60);
+	o=""; if (d>0) o=d "d "; if (h>0) o=o h "h "; printf "%s%d min", o, m}' /proc/uptime 2>/dev/null)
+
+pk=$(/sbin/apk info 2>/dev/null | wc -l | tr -d ' ')
+[ -n "$pk" ] && [ "$pk" != 0 ] || pk="n/a"
+
+shell=$(basename "${SHELL:-/bin/sh}")
+cpu=$(awk -F: '/model name/ {gsub(/^ +/, "", $2); print $2; exit}' /proc/cpuinfo 2>/dev/null)
+[ -n "$cpu" ] || cpu="n/a"
+mem=$(awk '/MemTotal/ {t=$2} /MemAvailable/ {a=$2} END {printf "%d / %d MiB", (t-a)/1024, t/1024}' /proc/meminfo 2>/dev/null)
+disk=$(df -h / 2>/dev/null | awk 'NR==2 {print $3 " / " $2 " (" $5 ")"}')
+
+if command -v clamscan >/dev/null 2>&1; then
+	av="ClamAV (run: flowkit av update)"
+	for f in /var/lib/clamav/*.cvd /var/lib/clamav/*.cld; do
+		[ -e "$f" ] && { av="ClamAV (databases loaded)"; break; }
+	done
+else
+	av="not installed"
+fi
+
+fk=$(flowkit -v 2>/dev/null)
+[ -n "$fk" ] || fk="flowkit"
+
+LOGO=$(cat <<'EOF'
+        _.-----._
+     .-'    |    '-.
+   .'   .---+---.   '.
+  /    /    |    \    \
+ |    |   i t t y |    |
+ |    |    O S    |    |
+  \    \         /    /
+   '.   '-.___.-'   .'
+     '-.    |    .-'
+        '-.___.-'
+EOF
+)
+
+INFO=$(
+	printf '%s%s@%s%s\n' "$C2" "$user" "$host" "$RST"
+	printf '%s\n' "-----------------"
+	printf '%sOS%s:        %s %s\n' "$BD" "$RST" "$os" "$arch"
+	printf '%sKernel%s:    %s\n' "$BD" "$RST" "$kernel"
+	printf '%sUptime%s:    %s\n' "$BD" "$RST" "$up"
+	printf '%sPackages%s:  %s (%s)\n' "$BD" "$RST" "$pk" "$fk"
+	printf '%sShell%s:     %s\n' "$BD" "$RST" "$shell"
+	printf '%sCPU%s:       %s\n' "$BD" "$RST" "$cpu"
+	printf '%sMemory%s:    %s\n' "$BD" "$RST" "$mem"
+	printf '%sDisk%s:      %s\n' "$BD" "$RST" "$disk"
+	printf '%sAntivirus%s: %s\n' "$BD" "$RST" "$av"
+)
+
+n_logo=$(printf '%s\n' "$LOGO" | wc -l)
+n_info=$(printf '%s\n' "$INFO" | wc -l)
+max=$n_logo
+[ "$n_info" -gt "$max" ] && max=$n_info
+
+echo
+i=1
+while [ "$i" -le "$max" ]; do
+	l=$(printf '%s\n' "$LOGO" | sed -n "${i}p")
+	r=$(printf '%s\n' "$INFO" | sed -n "${i}p")
+	printf '%s%-26s%s %s\n' "$C1" "$l" "$RST" "$r"
+	i=$((i + 1))
+done
+echo

@@ -1,0 +1,203 @@
+#!/bin/sh
+# install-ittyos - text-mode graphical installer of ittyOS (dialog)
+
+[ "$(id -u)" = 0 ] || { echo "Root privileges required."; exit 1; }
+command -v dialog >/dev/null 2>&1 || { echo "dialog not found."; exit 1; }
+command -v setup-disk >/dev/null 2>&1 || { echo "setup-disk not found (run from the ittyOS live image)."; exit 1; }
+
+export DIALOGRC=/etc/ittyos/dialogrc
+BT="ittyOS 1.0 - installer"
+LOG=/tmp/install-ittyos.log
+MNT=/mnt/ittyos-target
+T=$(mktemp -d /tmp/itty-inst.XXXXXX)
+trap 'rm -rf "$T"' EXIT
+: > "$LOG"
+
+# Dialog wrapper: answer goes to $ANS, exit code is preserved
+ask() {
+	dialog --backtitle "$BT" "$@" 2>"$T/out"
+	rc=$?
+	ANS=$(cat "$T/out")
+	return $rc
+}
+msg() { dialog --backtitle "$BT" --title "$1" --msgbox "$2" 10 62; }
+cancel() { clear; echo "Installation cancelled."; exit 1; }
+
+ask --title "Welcome" --yes-label "Next" --no-label "Exit" --yesno \
+"This is the ittyOS 1.0 installer.
+
+It will install the system to the disk you choose, create a user and set up the flowkit package manager and the antivirus.
+
+Continue?" 13 62 || cancel
+
+# --- Disk ---
+set --
+for d in /sys/block/*; do
+	n=${d##*/}
+	case $n in loop*|ram*|sr*|zram*|dm-*|nbd*|fd*) continue ;; esac
+	[ -r "$d/size" ] || continue
+	sz=$(awk '{printf "%.1f", $1*512/1073741824}' "$d/size")
+	mdl=$(tr -s ' ' < "$d/device/model" 2>/dev/null)
+	set -- "$@" "$n" "${sz} GB ${mdl:-disk}"
+done
+[ $# -gt 0 ] || { msg "No disks" "No suitable disks found. Add a disk to the virtual machine."; cancel; }
+ask --title "Select disk" --menu "Choose the target disk.\nALL DATA ON IT WILL BE ERASED." 17 64 6 "$@" || cancel
+DISK=$ANS
+
+# --- Hostname ---
+HOSTN=ittyos
+while :; do
+	ask --title "Computer name" --inputbox "Hostname (latin letters, digits, dash):" 9 56 "$HOSTN" || cancel
+	HOSTN=$ANS
+	case $HOSTN in
+		""|-*|*[!a-z0-9-]*) msg "Error" "Use lowercase latin letters, digits and dash only." ;;
+		*) break ;;
+	esac
+done
+
+# --- User ---
+USERN=itty
+while :; do
+	ask --title "User" --inputbox "New user name:" 9 56 "$USERN" || cancel
+	USERN=$ANS
+	case $USERN in
+		""|[!a-z_]*|*[!a-z0-9_-]*|root) msg "Error" "Lowercase latin letters, digits, _ and - only; not root." ;;
+		*) break ;;
+	esac
+done
+
+# --- Password ---
+while :; do
+	ask --title "Password" --insecure --passwordbox "Password for $USERN and root:" 9 56 || cancel
+	P1=$ANS
+	ask --title "Password" --insecure --passwordbox "Repeat the password:" 9 56 || cancel
+	P2=$ANS
+	if [ -z "$P1" ]; then msg "Error" "The password cannot be empty."
+	elif [ "$P1" != "$P2" ]; then msg "Error" "Passwords do not match."
+	else break; fi
+done
+
+# --- Timezone ---
+ask --title "Timezone" --menu "Choose your timezone:" 16 56 8 \
+	UTC "UTC" \
+	Europe/Moscow "Moscow" \
+	Europe/Riga "Riga" \
+	Europe/Berlin "Berlin" \
+	Europe/London "London" \
+	America/New_York "New York" \
+	Asia/Tokyo "Tokyo" || cancel
+TZN=$ANS
+
+# --- Components ---
+ask --title "Components" --checklist "Additional components:" 12 62 3 \
+	av "ClamAV antivirus (flowkit scan)" on \
+	base "bash, nano, htop, curl, git, sudo" on || cancel
+WANT_AV=0; WANT_BASE=0
+case $ANS in *av*) WANT_AV=1 ;; esac
+case $ANS in *base*) WANT_BASE=1 ;; esac
+
+ask --title "Confirm" --yes-label "Install" --no-label "Cancel" --yesno \
+"Disk:        /dev/$DISK  (will be ERASED)
+Hostname:    $HOSTN
+User:        $USERN
+Timezone:    $TZN
+Antivirus:   $([ $WANT_AV = 1 ] && echo yes || echo no)
+
+Start the installation?" 14 62 || cancel
+
+# --- Installation ---
+step() { printf 'XXX\n%s\n%s\nXXX\n' "$1" "$2"; }
+run() { "$@" >>"$LOG" 2>&1 || { echo "$*" > "$T/fail"; exit 1; }; }
+
+find_root() {
+	mkdir -p "$MNT"
+	for p in /dev/"$DISK"*[0-9]; do
+		[ -b "$p" ] || continue
+		if mount "$p" "$MNT" 2>/dev/null; then
+			[ -f "$MNT/etc/alpine-release" ] && return 0
+			umount "$MNT"
+		fi
+	done
+	return 1
+}
+
+(
+	step 1 "Checking package sources..."
+	if ! apk search -e linux-lts 2>/dev/null | grep -q linux-lts; then
+		# the kernel package is not on the ISO: use the online repositories
+		cat > /etc/apk/repositories <<REPOS
+https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+REPOS
+		apk update >>"$LOG" 2>&1 || { echo "no network (try: udhcpc -i eth0)" > "$T/fail"; exit 1; }
+	fi
+
+	step 3 "Partitioning the disk and installing the base system..."
+	ERASE_DISKS="/dev/$DISK" run setup-disk -m sys -s 0 "/dev/$DISK"
+
+	step 55 "Locating the installed system..."
+	find_root || { echo "root partition not found" > "$T/fail"; exit 1; }
+
+	step 60 "Installing packages..."
+	PKGS="tzdata"
+	[ $WANT_BASE = 1 ] && PKGS="$PKGS bash nano htop curl git sudo"
+	[ $WANT_AV = 1 ] && PKGS="$PKGS clamav freshclam"
+	# shellcheck disable=SC2086
+	apk add --root "$MNT" --keys-dir /etc/apk/keys --repositories-file /etc/apk/repositories $PKGS >>"$LOG" 2>&1 \
+		|| echo "some packages were not installed (see log)" >> "$LOG"
+
+	step 75 "Branding and flowkit..."
+	for f in /etc/os-release /etc/issue /etc/motd /etc/profile.d/flowkit.sh \
+		/usr/bin/flowkit /usr/bin/neofetch /usr/bin/install-ittyos /etc/ittyos/dialogrc; do
+		[ -e "$f" ] || continue
+		mkdir -p "$MNT$(dirname "$f")"
+		cp -a "$f" "$MNT$f"
+	done
+	echo "$HOSTN" > "$MNT/etc/hostname"
+	cat > "$MNT/etc/apk/repositories" <<REPOS
+https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+REPOS
+	printf 'auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n' > "$MNT/etc/network/interfaces"
+	chroot "$MNT" rc-update add networking boot >>"$LOG" 2>&1
+
+	step 85 "Timezone..."
+	if [ -e "$MNT/usr/share/zoneinfo/$TZN" ]; then
+		cp "$MNT/usr/share/zoneinfo/$TZN" "$MNT/etc/localtime"
+		echo "$TZN" > "$MNT/etc/timezone"
+	fi
+
+	step 90 "Creating the user..."
+	mkdir -p "$MNT/home" "$MNT/etc/sudoers.d"
+	SH=/bin/sh; [ -x "$MNT/bin/bash" ] && SH=/bin/bash
+	run chroot "$MNT" adduser -D -s "$SH" "$USERN"
+	run chroot "$MNT" addgroup "$USERN" wheel
+	echo '%wheel ALL=(ALL:ALL) ALL' > "$MNT/etc/sudoers.d/wheel"
+	chmod 440 "$MNT/etc/sudoers.d/wheel"
+	printf '%s:%s\nroot:%s\n' "$USERN" "$P1" "$P1" | chroot "$MNT" chpasswd >>"$LOG" 2>&1 \
+		|| { echo "chpasswd" > "$T/fail"; exit 1; }
+
+	step 97 "Finishing..."
+	sync
+	umount "$MNT" >>"$LOG" 2>&1
+	step 100 "Done"
+) | dialog --backtitle "$BT" --title "Installing ittyOS" --gauge "Preparing..." 9 64 0
+
+if [ -e "$T/fail" ]; then
+	mountpoint -q "$MNT" 2>/dev/null && umount "$MNT" 2>/dev/null
+	dialog --backtitle "$BT" --title "Installation failed: $(cat "$T/fail")" --textbox "$LOG" 22 76
+	clear
+	echo "Installation failed. Log: $LOG"
+	exit 1
+fi
+
+if ask --title "Done" --yes-label "Reboot" --no-label "Stay" --yesno \
+"ittyOS has been installed to /dev/$DISK.
+
+Remove the installation ISO and reboot the machine.
+Log in as $USERN (or root) with the password you set." 12 62; then
+	clear
+	reboot
+fi
+clear
+echo "Installation complete. Log: $LOG"

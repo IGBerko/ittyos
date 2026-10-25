@@ -1,0 +1,6 @@
+NAME="ittyOS"
+ID=ittyos
+ID_LIKE=alpine
+VERSION_ID=1.0
+PRETTY_NAME="ittyOS 1.0"
+HOME_URL="https://example.com/ittyos"

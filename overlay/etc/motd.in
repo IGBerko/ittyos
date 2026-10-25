@@ -1,0 +1,16 @@
+
+{CY}   _  _    _    _   _   ___   ____  
+  (_)| |_ | |_ | | | | / _ \ / ___| 
+  | || __|| __|| |_| || | | |\___ \ 
+  | || |_ | |_  \__, || |_| | ___) |
+  |_| \__| \__| |___/  \___/ |____/ {R}
+
+  {B}ittyOS 1.0{R}  -  lightweight Linux system
+  {D}package manager: flowkit  |  antivirus: ClamAV{R}
+
+  {CY}flowkit -h{R}          package manager help
+  {CY}flowkit -i <pkg>{R}  install a package (virus-checked)
+  {CY}flowkit scan{R}        scan the system for viruses
+  {CY}neofetch{R}            system information
+  {CY}install-ittyos{R}      install ittyOS to disk
+
