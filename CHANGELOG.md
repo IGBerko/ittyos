@@ -9,6 +9,8 @@
 - Single `VERSION` file; the version is substituted into os-release, motd, issue,
   flowkit and the installer. ISO is copied as `ittyOS-<version>.iso`.
 - `./build.sh apply` updates a running ittyOS from the repository.
+- Fix: live ISO did not mount the kernel modules (`modloop` service was missing),
+  so the installer could not mount ext4.
 - `os-release` now has `LOGO`, `ANSI_COLOR` and the GitHub URLs.
 - flowkit now reports its version as the ittyOS version (`flowkit 1.0.1, cmp86_64`).
 
