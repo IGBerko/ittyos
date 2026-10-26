@@ -6,7 +6,7 @@ sleep 8
 
 # Current version: dedicated file (written by build.sh stage) or os-release
 CURRENT=
- if [ -r /etc/ittyos-version ]; then
+if [ -r /etc/ittyos-version ]; then
 	CURRENT=$(tr -d '[:space:]' </etc/ittyos-version)
 fi
 if [ -z "$CURRENT" ] && [ -r /etc/os-release ]; then
