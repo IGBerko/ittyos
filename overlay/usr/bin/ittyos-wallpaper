@@ -1,9 +1,28 @@
 #!/bin/sh
-# ittyos-wallpaper - set the ittyOS wallpaper in a running XFCE session
-IMG="${1:-/usr/share/backgrounds/ittyos/ittyos.jpg}"
-[ -r "$IMG" ] || { echo "image not found: $IMG"; exit 1; }
+# ittyos-wallpaper [dark|<file>] - set the ittyOS wallpaper in a running XFCE session
+# No argument: the default wallpaper, QHD variant on screens wider than 2000 px.
+DIR=/usr/share/backgrounds/ittyos
+
 command -v xfconf-query >/dev/null 2>&1 || { echo "xfconf-query not found (is XFCE installed?)"; exit 1; }
 [ -n "$DISPLAY" ] || { echo "run this inside the XFCE desktop (terminal)"; exit 1; }
+
+name=ittyos
+case "${1:-}" in
+	"") ;;
+	dark) name=ittyos-dark ;;
+	*) IMG="$1" ;;
+esac
+
+if [ -z "$IMG" ]; then
+	w=0
+	if command -v xrandr >/dev/null 2>&1; then
+		w=$(xrandr 2>/dev/null | sed -n 's/.*current \([0-9]*\) x [0-9]*.*/\1/p' | head -n 1)
+	fi
+	IMG="$DIR/$name.png"
+	[ "${w:-0}" -gt 2000 ] 2>/dev/null && [ -r "$DIR/${name}_qhd.png" ] && IMG="$DIR/${name}_qhd.png"
+fi
+[ -r "$IMG" ] || { echo "image not found: $IMG"; exit 1; }
+
 n=0
 for p in $(xfconf-query -c xfce4-desktop -l | grep -E '/(last-image|image-path)$'); do
 	xfconf-query -c xfce4-desktop -p "$p" -s "$IMG" && n=$((n + 1))
@@ -12,4 +31,4 @@ if [ "$n" = 0 ]; then
 	echo "no wallpaper settings found: set it via Desktop settings -> Background"
 	exit 1
 fi
-echo "wallpaper set ($n entries)"
+echo "wallpaper set: $IMG ($n entries)"
