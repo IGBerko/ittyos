@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.2
+- Protection in layers instead of a single engine:
+  - `flowkit scan` uses YARA (works offline, basic rules in `/usr/share/ittyos/yara`,
+    add your own to `/etc/ittyos/yara`) and ClamAV when its databases are available.
+  - `flowkit audit` compares installed files with their packages (`apk audit`, offline).
+  - `flowkit av status` shows the state of every layer.
+- `flowkit av update`: a clear message when the ClamAV server answers 403 ("Blocked by CDN"),
+  instead of a wall of text. `--verbose` shows the raw output.
+- neofetch shows which protection engines are really working.
+- `yara` is now part of the ISO, the installer and the WSL rootfs.
+
 ## 1.0.1
 - Desktop branding for XFCE: ittyOS wallpaper (topographic lines; the dark variant is `ittyos-dark.png`; QHD versions `*_qhd.png`), LightDM greeter background and logo,
   terminal colors, `ittyos-wallpaper [dark]` helper (picks the QHD image on wide screens).

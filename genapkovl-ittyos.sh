@@ -33,6 +33,7 @@ chrony
 chrony-openrc
 clamav
 freshclam
+yara
 e2fsprogs
 dosfstools
 sfdisk

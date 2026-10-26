@@ -4,7 +4,8 @@ A small Linux distribution built on [Alpine Linux](https://alpinelinux.org/)
 (musl, OpenRC, apk), with its own package manager frontend and a built-in antivirus.
 
 - **flowkit** - package manager (`flowkit -i <pkg>`, `-v`, `-h`), a frontend over apk
-- **ClamAV antivirus** - `flowkit scan`; packages are scanned before they are installed
+- **Protection layers** - `flowkit scan` (YARA + ClamAV), `flowkit audit` (apk audit);
+  packages are scanned with ClamAV before they are installed, when its databases are available
 - **install-ittyos** - text-mode graphical installer (dialog)
 - **neofetch** and a colored motd
 - XFCE desktop branding (wallpaper, login screen, terminal colors)

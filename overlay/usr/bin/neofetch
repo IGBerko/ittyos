@@ -33,14 +33,19 @@ cpu=$(awk -F: '/model name/ {gsub(/^ +/, "", $2); print $2; exit}' /proc/cpuinfo
 mem=$(awk '/MemTotal/ {t=$2} /MemAvailable/ {a=$2} END {printf "%d / %d MiB", (t-a)/1024, t/1024}' /proc/meminfo 2>/dev/null)
 disk=$(df -h / 2>/dev/null | awk 'NR==2 {print $3 " / " $2 " (" $5 ")"}')
 
-if command -v clamscan >/dev/null 2>&1; then
-	av="ClamAV (run: flowkit av update)"
-	for f in /var/lib/clamav/*.cvd /var/lib/clamav/*.cld; do
-		[ -e "$f" ] && { av="ClamAV (databases loaded)"; break; }
-	done
-else
-	av="not installed"
+av=""
+if command -v yara >/dev/null 2>&1; then
+	av="YARA"
 fi
+if command -v clamscan >/dev/null 2>&1; then
+	cl="ClamAV (no databases)"
+	[ -e /var/lib/clamav/.flowkit-blocked ] && cl="ClamAV (access refused)"
+	for f in /var/lib/clamav/*.cvd /var/lib/clamav/*.cld; do
+		[ -e "$f" ] && { cl="ClamAV"; break; }
+	done
+	av="${av:+$av, }$cl"
+fi
+[ -n "$av" ] || av="not installed"
 
 fk=$(flowkit -v 2>/dev/null)
 [ -n "$fk" ] || fk="flowkit"

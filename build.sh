@@ -37,7 +37,7 @@ stage() {
 		sed -i "s/@VERSION@/$VER/g" "$STAGE/$f"
 	done
 	chmod 755 "$STAGE"/usr/bin/*
-	chmod 644 "$STAGE"/usr/share/backgrounds/ittyos/* "$STAGE"/usr/share/pixmaps/*
+	chmod 644 "$STAGE"/usr/share/backgrounds/ittyos/* "$STAGE"/usr/share/pixmaps/* "$STAGE"/usr/share/ittyos/yara/*
 	chmod 644 "$STAGE"/etc/os-release "$STAGE"/etc/issue "$STAGE"/etc/motd \
 	          "$STAGE"/etc/profile.d/flowkit.sh "$STAGE"/etc/ittyos/dialogrc
 }
@@ -127,7 +127,7 @@ cmd_wsl() {
 	BASE="$WORK/base.tar.gz"
 	"$WORK/alpine-make-rootfs/alpine-make-rootfs" \
 		--branch "v$ALPINE" \
-		--packages 'alpine-base openrc bash sudo nano htop curl git shadow tzdata dialog clamav freshclam' \
+		--packages 'alpine-base openrc bash sudo nano htop curl git shadow tzdata dialog clamav freshclam yara' \
 		--timezone 'UTC' \
 		"$BASE"
 

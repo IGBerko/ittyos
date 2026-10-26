@@ -90,7 +90,7 @@ TZN=$ANS
 
 # --- Components ---
 ask --title "Components" --checklist "Additional components:" 12 62 3 \
-	av "ClamAV antivirus (flowkit scan)" on \
+	av "YARA + ClamAV protection (flowkit scan)" on \
 	base "bash, nano, htop, curl, git, sudo" on || cancel
 WANT_AV=0; WANT_BASE=0
 case $ANS in *av*) WANT_AV=1 ;; esac
@@ -141,7 +141,7 @@ REPOS
 	step 60 "Installing packages..."
 	PKGS="tzdata chrony chrony-openrc"
 	[ $WANT_BASE = 1 ] && PKGS="$PKGS bash nano htop curl git sudo"
-	[ $WANT_AV = 1 ] && PKGS="$PKGS clamav freshclam"
+	[ $WANT_AV = 1 ] && PKGS="$PKGS yara clamav freshclam"
 	# shellcheck disable=SC2086
 	apk add --root "$MNT" --keys-dir /etc/apk/keys --repositories-file /etc/apk/repositories $PKGS >>"$LOG" 2>&1 \
 		|| echo "some packages were not installed (see log)" >> "$LOG"
@@ -149,7 +149,7 @@ REPOS
 	step 75 "Branding and flowkit..."
 	for f in /etc/os-release /etc/issue /etc/motd /etc/profile.d/flowkit.sh \
 		/usr/bin/flowkit /usr/bin/neofetch /usr/bin/install-ittyos /usr/bin/ittyos-wallpaper \
-		/etc/ittyos /etc/chrony/chrony.conf /etc/lightdm/lightdm-gtk-greeter.conf \
+		/etc/ittyos /usr/share/ittyos /etc/chrony/chrony.conf /etc/lightdm/lightdm-gtk-greeter.conf \
 		/etc/xdg/xfce4/terminal /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml \
 		/usr/share/backgrounds/ittyos /usr/share/pixmaps/ittyos-logo.png; do
 		[ -e "$f" ] || continue
