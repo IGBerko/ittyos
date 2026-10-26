@@ -6,7 +6,7 @@ command -v dialog >/dev/null 2>&1 || { echo "dialog not found."; exit 1; }
 command -v setup-disk >/dev/null 2>&1 || { echo "setup-disk not found (run from the ittyOS live image)."; exit 1; }
 
 export DIALOGRC=/etc/ittyos/dialogrc
-BT="ittyOS 1.0 - installer"
+BT="ittyOS @VERSION@ - installer"
 LOG=/tmp/install-ittyos.log
 MNT=/mnt/ittyos-target
 T=$(mktemp -d /tmp/itty-inst.XXXXXX)
@@ -24,7 +24,7 @@ msg() { dialog --backtitle "$BT" --title "$1" --msgbox "$2" 10 62; }
 cancel() { clear; echo "Installation cancelled."; exit 1; }
 
 ask --title "Welcome" --yes-label "Next" --no-label "Exit" --yesno \
-"This is the ittyOS 1.0 installer.
+"This is the ittyOS @VERSION@ installer.
 
 It will install the system to the disk you choose, create a user and set up the flowkit package manager and the antivirus.
 
@@ -139,7 +139,7 @@ REPOS
 	find_root || { echo "root partition not found" > "$T/fail"; exit 1; }
 
 	step 60 "Installing packages..."
-	PKGS="tzdata"
+	PKGS="tzdata chrony chrony-openrc"
 	[ $WANT_BASE = 1 ] && PKGS="$PKGS bash nano htop curl git sudo"
 	[ $WANT_AV = 1 ] && PKGS="$PKGS clamav freshclam"
 	# shellcheck disable=SC2086
@@ -148,9 +148,13 @@ REPOS
 
 	step 75 "Branding and flowkit..."
 	for f in /etc/os-release /etc/issue /etc/motd /etc/profile.d/flowkit.sh \
-		/usr/bin/flowkit /usr/bin/neofetch /usr/bin/install-ittyos /etc/ittyos/dialogrc; do
+		/usr/bin/flowkit /usr/bin/neofetch /usr/bin/install-ittyos /usr/bin/ittyos-wallpaper \
+		/etc/ittyos /etc/chrony/chrony.conf /etc/lightdm/lightdm-gtk-greeter.conf \
+		/etc/xdg/xfce4/terminal /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml \
+		/usr/share/backgrounds/ittyos /usr/share/pixmaps/ittyos-logo.png; do
 		[ -e "$f" ] || continue
 		mkdir -p "$MNT$(dirname "$f")"
+		rm -rf "$MNT$f"
 		cp -a "$f" "$MNT$f"
 	done
 	echo "$HOSTN" > "$MNT/etc/hostname"
@@ -160,6 +164,7 @@ https://dl-cdn.alpinelinux.org/alpine/v3.24/community
 REPOS
 	printf 'auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n' > "$MNT/etc/network/interfaces"
 	chroot "$MNT" rc-update add networking boot >>"$LOG" 2>&1
+	chroot "$MNT" rc-update add chronyd default >>"$LOG" 2>&1
 
 	step 85 "Timezone..."
 	if [ -e "$MNT/usr/share/zoneinfo/$TZN" ]; then

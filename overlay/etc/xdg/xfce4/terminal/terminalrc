@@ -1,0 +1,7 @@
+[Configuration]
+ColorForeground=#e6f6fb
+ColorBackground=#06101e
+ColorCursor=#22d3ee
+FontName=Monospace 11
+MiscDefaultGeometry=100x30
+ScrollingBar=TERMINAL_SCROLLBAR_NONE

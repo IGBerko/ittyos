@@ -1,8 +1,10 @@
 #!/bin/sh
 # flowkit - package manager of ittyOS (apk frontend + ClamAV antivirus)
 
-FK_VERSION="1.0"
+FK_VERSION="@VERSION@"
+case $FK_VERSION in @*) FK_VERSION=dev ;; esac
 FK_ARCH="cmp86_64"
+FK_MINYEAR=2026
 APK="${FLOWKIT_APK:-/sbin/apk}"
 CLAMDB="/var/lib/clamav"
 
@@ -135,9 +137,22 @@ cmd_av() {
 			command -v freshclam >/dev/null 2>&1 || die "freshclam not found: flowkit av install"
 			mem=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)
 			[ "${mem:-0}" -lt 1500 ] && warn "less than 1.5 GB RAM: ClamAV databases are large, memory may run out"
+			# A wrong clock breaks TLS; repeated failed attempts get you rate-limited by the ClamAV CDN.
+			[ "$(date +%Y)" -ge "$FK_MINYEAR" ] 2>/dev/null || \
+				die "system clock looks wrong ($(date +%F)); fix it first: chronyd -q 'pool pool.ntp.org iburst'  (or: date -s 'YYYY-MM-DD HH:MM:SS')"
 			mkdir -p "$CLAMDB"
+			stamp="$CLAMDB/.flowkit-last-update"
+			if [ -r "$stamp" ]; then
+				age=$(( $(date +%s) - $(cat "$stamp" 2>/dev/null || echo 0) ))
+				if [ "$age" -ge 0 ] && [ "$age" -lt 3600 ]; then
+					die "last update was $((age / 60)) min ago; ClamAV allows at most one update per hour (try again in $(( (3600 - age + 59) / 60 )) min)"
+				fi
+			fi
 			info "downloading virus databases"
-			exec freshclam
+			freshclam
+			rc=$?
+			date +%s > "$stamp"
+			exit $rc
 			;;
 		status)
 			printf '%sClamAV antivirus%s\n' "$B" "$R"

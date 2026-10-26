@@ -5,7 +5,7 @@
   | || |_ | |_  \__, || |_| | ___) |
   |_| \__| \__| |___/  \___/ |____/ {R}
 
-  {B}ittyOS 1.0{R}  -  lightweight Linux system
+  {B}ittyOS @VERSION@{R}  -  lightweight Linux system
   {D}package manager: flowkit  |  antivirus: ClamAV{R}
 
   {CY}flowkit -h{R}          package manager help

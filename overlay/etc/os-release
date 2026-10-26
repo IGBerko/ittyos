@@ -1,6 +1,9 @@
 NAME="ittyOS"
 ID=ittyos
 ID_LIKE=alpine
-VERSION_ID=1.0
-PRETTY_NAME="ittyOS 1.0"
-HOME_URL="https://example.com/ittyos"
+VERSION_ID=@VERSION@
+PRETTY_NAME="ittyOS @VERSION@"
+ANSI_COLOR="0;36"
+LOGO=ittyos-logo
+HOME_URL="https://github.com/IGBerko/ittyos"
+BUG_REPORT_URL="https://github.com/IGBerko/ittyos/issues"

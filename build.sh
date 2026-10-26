@@ -5,6 +5,7 @@
 #   ./build.sh iso     (builder)    собрать ISO
 #   ./build.sh wsl     (root)       собрать rootfs-архив для wsl --import
 #   ./build.sh stage                только подготовить оверлей (для проверки)
+#   ./build.sh apply   (root)       применить оверлей к РАБОТАЮЩЕЙ системе (обновить установленную ittyOS)
 #
 # Переменные: OUT (куда класть результат, по умолчанию ~/iso или ~/out),
 #             COPY_TO (доп. папка, по умолчанию /mnt/c/WSL если существует),
@@ -31,6 +32,10 @@ stage() {
 	    -e "s/{B}/${E}[1m/g" -e "s/{D}/${E}[2m/g" \
 	    "$STAGE/etc/motd.in" > "$STAGE/etc/motd"
 	rm -f "$STAGE/etc/motd.in"
+	VER=$(cat "$HERE/VERSION")
+	for f in etc/os-release etc/issue etc/motd usr/bin/flowkit usr/bin/install-ittyos; do
+		sed -i "s/@VERSION@/$VER/g" "$STAGE/$f"
+	done
 	chmod 755 "$STAGE"/usr/bin/*
 	chmod 644 "$STAGE"/etc/os-release "$STAGE"/etc/issue "$STAGE"/etc/motd \
 	          "$STAGE"/etc/profile.d/flowkit.sh "$STAGE"/etc/ittyos/dialogrc
@@ -93,9 +98,17 @@ cmd_iso() {
 	say "готово: $ISO"
 	COPY_TO="${COPY_TO:-/mnt/c/WSL}"
 	if [ -d "$COPY_TO" ]; then
-		cp "$ISO" "$COPY_TO/ittyOS.iso"
-		say "скопировано: $COPY_TO/ittyOS.iso"
+		cp "$ISO" "$COPY_TO/ittyOS-$(cat "$HERE/VERSION").iso"
+		say "скопировано: $COPY_TO/ittyOS-$(cat "$HERE/VERSION").iso"
 	fi
+}
+
+cmd_apply() {
+	[ "$(id -u)" = 0 ] || die "apply запускается от root"
+	stage
+	say "применение оверлея к системе"
+	cp -a "$STAGE/." /
+	say "готово: ittyOS $(cat "$HERE/VERSION"). Обои: ittyos-wallpaper (внутри рабочего стола)"
 }
 
 cmd_wsl() {
@@ -151,5 +164,6 @@ case "${1:-}" in
 	iso) cmd_iso ;;
 	wsl) cmd_wsl ;;
 	stage) stage; say "оверлей: $STAGE" ;;
-	*) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+	apply) cmd_apply ;;
+	*) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac

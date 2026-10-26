@@ -3,7 +3,7 @@ profile_ittyos() {
 	title="ittyOS"
 	desc="ittyOS live system"
 	hostname="ittyos"
-	apks="$apks linux-lts bash nano htop curl git sudo dialog tzdata clamav freshclam
+	apks="$apks linux-lts bash nano htop curl git sudo dialog tzdata chrony chrony-openrc clamav freshclam
 		e2fsprogs dosfstools sfdisk syslinux util-linux"
 	apkovl="genapkovl-ittyos.sh"
 }

@@ -1,0 +1,15 @@
+#!/bin/sh
+# ittyos-wallpaper - set the ittyOS wallpaper in a running XFCE session
+IMG="${1:-/usr/share/backgrounds/ittyos/ittyos.png}"
+[ -r "$IMG" ] || { echo "image not found: $IMG"; exit 1; }
+command -v xfconf-query >/dev/null 2>&1 || { echo "xfconf-query not found (is XFCE installed?)"; exit 1; }
+[ -n "$DISPLAY" ] || { echo "run this inside the XFCE desktop (terminal)"; exit 1; }
+n=0
+for p in $(xfconf-query -c xfce4-desktop -l | grep -E '/(last-image|image-path)$'); do
+	xfconf-query -c xfce4-desktop -p "$p" -s "$IMG" && n=$((n + 1))
+done
+if [ "$n" = 0 ]; then
+	echo "no wallpaper settings found: set it via Desktop settings -> Background"
+	exit 1
+fi
+echo "wallpaper set ($n entries)"

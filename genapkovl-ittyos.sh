@@ -29,6 +29,8 @@ git
 sudo
 dialog
 tzdata
+chrony
+chrony-openrc
 clamav
 freshclam
 e2fsprogs
@@ -40,6 +42,7 @@ EOT
 
 for s in devfs dmesg mdev hwdrivers; do rc_add $s sysinit; done
 for s in modules sysctl hostname bootmisc swclock syslog networking; do rc_add $s boot; done
+for s in chronyd; do rc_add $s default; done
 for s in mount-ro killprocs savecache; do rc_add $s shutdown; done
 
 chown -R root:root "$tmp"
