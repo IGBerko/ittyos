@@ -9,6 +9,7 @@ A small Linux distribution built on [Alpine Linux](https://alpinelinux.org/)
 - **install-ittyos** - text-mode graphical installer (dialog)
 - **neofetch** and a colored motd
 - XFCE desktop branding (wallpaper, login screen, terminal colors)
+- **ittyos-check-update** - notifies on desktop login when a newer version is on GitHub
 
 ## Build
 
@@ -42,3 +43,7 @@ On an installed system (as root, with network access):
     ittyos-wallpaper          # inside the XFCE session, for an already existing profile
 
 For a new user the wallpaper is applied automatically on first login.
+
+After a desktop login, `ittyos-check-update` runs once (XDG autostart). If
+`/etc/ittyos-version` is older than the `VERSION` file on GitHub, it shows a
+warning dialog (zenity / kdialog / yad) or a critical notification.

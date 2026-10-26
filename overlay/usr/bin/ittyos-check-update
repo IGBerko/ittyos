@@ -1,0 +1,63 @@
+#!/bin/sh
+# ittyos-check-update - notify when a newer ittyOS VERSION is published on GitHub
+# Runs from XDG autostart after a desktop session starts.
+
+sleep 8
+
+# Current version: dedicated file (written by build.sh stage) or os-release
+CURRENT=
+ if [ -r /etc/ittyos-version ]; then
+	CURRENT=$(tr -d '[:space:]' </etc/ittyos-version)
+fi
+if [ -z "$CURRENT" ] && [ -r /etc/os-release ]; then
+	CURRENT=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"[:space:]')
+fi
+[ -n "$CURRENT" ] || exit 0
+
+# Prefer the VERSION file in the repo (matches what build.sh uses).
+# Fallback: newest release tag from the API.
+LATEST=$(curl -fsS --connect-timeout 6 --max-time 12 \
+	"https://raw.githubusercontent.com/IGBerko/ittyOS/main/VERSION" 2>/dev/null | tr -d '[:space:]')
+
+if [ -z "$LATEST" ]; then
+	json=$(curl -fsS --connect-timeout 6 --max-time 12 \
+		"https://api.github.com/repos/IGBerko/ittyOS/releases" 2>/dev/null) || exit 0
+	LATEST=$(printf '%s' "$json" | grep -o '"tag_name": *"[^"]*"' | head -n 1 | \
+		sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+fi
+
+[ -n "$LATEST" ] || exit 0
+[ "$CURRENT" = "$LATEST" ] && exit 0
+
+RELEASE_URL="https://github.com/IGBerko/ittyOS/releases"
+TITLE="ittyOS update available"
+MESSAGE="Installed: ${CURRENT}
+New: ${LATEST}
+
+Update a running system:
+  cd /path/to/ittyos && git pull
+  sudo ./build.sh apply
+
+${RELEASE_URL}"
+
+# Prefer a modal dialog; fall back to a tray notification.
+if command -v zenity >/dev/null 2>&1; then
+	zenity --warning --title="$TITLE" --text="$MESSAGE" --width=480 2>/dev/null
+	exit 0
+fi
+if command -v kdialog >/dev/null 2>&1; then
+	kdialog --title "$TITLE" --sorry "$MESSAGE" 2>/dev/null
+	exit 0
+fi
+if command -v yad >/dev/null 2>&1; then
+	yad --image="dialog-warning" --title="$TITLE" --text="$MESSAGE" --width=480 --button=OK:0 2>/dev/null
+	exit 0
+fi
+if command -v notify-send >/dev/null 2>&1; then
+	notify-send -u critical -i dialog-warning \
+		"$TITLE" \
+		"Installed: ${CURRENT} → New: ${LATEST}\n${RELEASE_URL}"
+	exit 0
+fi
+
+exit 0

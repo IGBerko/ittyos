@@ -32,14 +32,20 @@ stage() {
 	    -e "s/{B}/${E}[1m/g" -e "s/{D}/${E}[2m/g" \
 	    "$STAGE/etc/motd.in" > "$STAGE/etc/motd"
 	rm -f "$STAGE/etc/motd.in"
-	VER=$(cat "$HERE/VERSION")
+	VER=$(cat "$HERE/VERSION" | tr -d '[:space:]')
+	# Единый файл версии для проверки обновлений и скриптов
+	printf '%s\n' "$VER" > "$STAGE/etc/ittyos-version"
 	for f in etc/os-release etc/issue etc/motd usr/bin/flowkit usr/bin/install-ittyos; do
 		sed -i "s/@VERSION@/$VER/g" "$STAGE/$f"
 	done
 	chmod 755 "$STAGE"/usr/bin/*
 	chmod 644 "$STAGE"/usr/share/backgrounds/ittyos/* "$STAGE"/usr/share/pixmaps/* "$STAGE"/usr/share/ittyos/yara/*
 	chmod 644 "$STAGE"/etc/os-release "$STAGE"/etc/issue "$STAGE"/etc/motd \
-	          "$STAGE"/etc/profile.d/flowkit.sh "$STAGE"/etc/ittyos/dialogrc
+	          "$STAGE"/etc/profile.d/flowkit.sh "$STAGE"/etc/ittyos/dialogrc \
+	          "$STAGE"/etc/ittyos-version
+	if [ -d "$STAGE/etc/xdg/autostart" ]; then
+		chmod 644 "$STAGE"/etc/xdg/autostart/*.desktop 2>/dev/null || true
+	fi
 }
 
 cmd_setup() {
@@ -99,8 +105,8 @@ cmd_iso() {
 	say "готово: $ISO"
 	COPY_TO="${COPY_TO:-/mnt/c/WSL}"
 	if [ -d "$COPY_TO" ]; then
-		cp "$ISO" "$COPY_TO/ittyOS-$(cat "$HERE/VERSION").iso"
-		say "скопировано: $COPY_TO/ittyOS-$(cat "$HERE/VERSION").iso"
+		cp "$ISO" "$COPY_TO/ittyOS-$(cat "$HERE/VERSION" | tr -d '[:space:]').iso"
+		say "скопировано: $COPY_TO/ittyOS-$(cat "$HERE/VERSION" | tr -d '[:space:]').iso"
 	fi
 }
 
@@ -109,7 +115,7 @@ cmd_apply() {
 	stage
 	say "применение оверлея к системе"
 	cp -a "$STAGE/." /
-	say "готово: ittyOS $(cat "$HERE/VERSION"). Обои: ittyos-wallpaper (внутри рабочего стола)"
+	say "готово: ittyOS $(cat "$HERE/VERSION" | tr -d '[:space:]'). Обои: ittyos-wallpaper (внутри рабочего стола)"
 }
 
 cmd_wsl() {

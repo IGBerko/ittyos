@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ittyOS Update Check
+Comment=Notify when a newer ittyOS version is available on GitHub
+Exec=/usr/bin/ittyos-check-update
+OnlyShowIn=XFCE;GNOME;KDE;MATE;Cinnamon;LXQt;COSMIC;
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

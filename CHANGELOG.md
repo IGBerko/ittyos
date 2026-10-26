@@ -4,6 +4,9 @@
 - `help` now shows a readable overview of ittyOS commands (`help all` still lists every
   busybox command, `help flowkit` shows the package manager help).
 - XFCE terminal runs a login shell, so the `apk` and `help` aliases work there too.
+- **Update check**: `ittyos-check-update` compares `/etc/ittyos-version` with the
+  `VERSION` file on GitHub and shows a dialog (zenity/kdialog/yad) or a tray
+  notification. Enabled via XDG autostart after desktop login.
 
 ## 1.0.2
 - Protection in layers instead of a single engine:
