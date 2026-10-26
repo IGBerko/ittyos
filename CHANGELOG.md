@@ -1,7 +1,7 @@
 # Changelog
 
 ## 1.0.1
-- Desktop branding for XFCE: ittyOS wallpaper, LightDM greeter background and logo,
+- Desktop branding for XFCE: ittyOS wallpaper (topographic lines; the dark one is `ittyos-dark.png`), LightDM greeter background and logo,
   terminal colors, `ittyos-wallpaper` helper.
 - Time sync at boot (chrony): a wrong clock broke TLS and ClamAV database updates.
 - `flowkit av update`: refuses to run when the clock is wrong or less than an hour
