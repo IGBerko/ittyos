@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3
+- `help` now shows a readable overview of ittyOS commands (`help all` still lists every
+  busybox command, `help flowkit` shows the package manager help).
+- XFCE terminal runs a login shell, so the `apk` and `help` aliases work there too.
+
 ## 1.0.2
 - Protection in layers instead of a single engine:
   - `flowkit scan` uses YARA (works offline, basic rules in `/usr/share/ittyos/yara`,

@@ -5,3 +5,4 @@ ColorCursor=#22d3ee
 FontName=Monospace 11
 MiscDefaultGeometry=100x30
 ScrollingBar=TERMINAL_SCROLLBAR_NONE
+CommandLoginShell=TRUE

@@ -148,7 +148,7 @@ REPOS
 
 	step 75 "Branding and flowkit..."
 	for f in /etc/os-release /etc/issue /etc/motd /etc/profile.d/flowkit.sh \
-		/usr/bin/flowkit /usr/bin/neofetch /usr/bin/install-ittyos /usr/bin/ittyos-wallpaper \
+		/usr/bin/flowkit /usr/bin/neofetch /usr/bin/install-ittyos /usr/bin/ittyos-wallpaper /usr/bin/ittyos-help \
 		/etc/ittyos /usr/share/ittyos /etc/chrony/chrony.conf /etc/lightdm/lightdm-gtk-greeter.conf \
 		/etc/xdg/xfce4/terminal /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml \
 		/usr/share/backgrounds/ittyos /usr/share/pixmaps/ittyos-logo.png; do

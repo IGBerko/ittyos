@@ -1,0 +1,52 @@
+#!/bin/sh
+# ittyos-help - overview of ittyOS commands (replaces the busybox "help")
+
+if [ -t 1 ]; then
+	R=$(printf '\033[0m'); B=$(printf '\033[1m'); CY=$(printf '\033[36m'); D=$(printf '\033[2m')
+else
+	R=; B=; CY=; D=
+fi
+
+row() { printf '  %s%-22s%s %s\n' "$CY" "$1" "$R" "$2"; }
+
+case "${1:-}" in
+	all)
+		# the original busybox list: every command the system knows
+		busybox --list | sort | column 2>/dev/null || busybox --list | sort
+		exit 0 ;;
+	flowkit) exec flowkit -h ;;
+	-h|--help)
+		echo "usage: help [all|flowkit]"; exit 0 ;;
+esac
+
+ver=$(sed -n 's/^PRETTY_NAME="\(.*\)"/\1/p' /etc/os-release 2>/dev/null)
+printf '\n%s%s%s  -  command overview\n' "$B" "${ver:-ittyOS}" "$R"
+
+printf '\n%sSoftware%s\n' "$B" "$R"
+row "flowkit -i <pkg>"      "install a package (virus-checked)"
+row "flowkit -r <pkg>"      "remove a package"
+row "flowkit -s <text>"     "search packages"
+row "flowkit update"        "refresh indexes"
+row "flowkit upgrade"       "upgrade the system"
+row "flowkit -h"            "full flowkit help"
+
+printf '\n%sProtection%s\n' "$B" "$R"
+row "flowkit scan [path]"   "scan with YARA and ClamAV"
+row "flowkit audit"         "check files against their packages"
+row "flowkit av status"     "state of the protection layers"
+row "flowkit av update"     "download ClamAV databases"
+
+printf '\n%sSystem%s\n' "$B" "$R"
+row "neofetch"              "system information"
+row "install-ittyos"        "install ittyOS to disk (live ISO)"
+row "ittyos-wallpaper"      "set the ittyOS wallpaper (XFCE)"
+row "rc-service <n> start"  "start/stop/restart a service"
+row "rc-update add <n>"     "start a service at boot"
+row "setup-desktop xfce"    "install the XFCE desktop"
+row "poweroff / reboot"     "shut down / restart"
+
+printf '\n%sMore%s\n' "$B" "$R"
+row "help flowkit"          "package manager help"
+row "help all"              "every command of the system (busybox list)"
+row "man <command>"         "manual page, if installed (flowkit -i mandoc)"
+printf '\n%sTip: <command> --help works for most programs.%s\n\n' "$D" "$R"

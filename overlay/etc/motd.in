@@ -12,5 +12,6 @@
   {CY}flowkit -i <pkg>{R}  install a package (virus-checked)
   {CY}flowkit scan{R}        scan the system for viruses
   {CY}neofetch{R}            system information
+  {CY}help{R}                all ittyOS commands
   {CY}install-ittyos{R}      install ittyOS to disk
 
