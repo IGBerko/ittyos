@@ -1,8 +1,19 @@
 #!/bin/sh
-# ittyos-check-update - notify when a newer ittyOS VERSION is published on GitHub
+# ittyos-check-update - notify when a newer ittyOS version is published on GitHub
 # Runs from XDG autostart after a desktop session starts.
+#   ittyos-check-update --now   check right away, ignore "already notified", print to the terminal
 
-sleep 8
+REPO="IGBerko/ittyos"
+NOW=0
+[ "${1:-}" = "--now" ] && NOW=1
+
+# opt-out: create /etc/ittyos/no-update-check (all users) or ~/.config/ittyos/no-update-check (one user)
+if [ -e /etc/ittyos/no-update-check ] || [ -e "${XDG_CONFIG_HOME:-$HOME/.config}/ittyos/no-update-check" ]; then
+	[ "$NOW" = 1 ] && echo "update check is disabled (remove the no-update-check file to enable it)"
+	exit 0
+fi
+
+[ "$NOW" = 1 ] || sleep 8
 
 # Current version: dedicated file (written by build.sh stage) or os-release
 CURRENT=
@@ -17,47 +28,78 @@ fi
 # Prefer the VERSION file in the repo (matches what build.sh uses).
 # Fallback: newest release tag from the API.
 LATEST=$(curl -fsS --connect-timeout 6 --max-time 12 \
-	"https://raw.githubusercontent.com/IGBerko/ittyOS/main/VERSION" 2>/dev/null | tr -d '[:space:]')
+	"https://raw.githubusercontent.com/$REPO/main/VERSION" 2>/dev/null | tr -d '[:space:]')
 
 if [ -z "$LATEST" ]; then
 	json=$(curl -fsS --connect-timeout 6 --max-time 12 \
-		"https://api.github.com/repos/IGBerko/ittyOS/releases" 2>/dev/null) || exit 0
+		"https://api.github.com/repos/$REPO/releases" 2>/dev/null) || exit 0
 	LATEST=$(printf '%s' "$json" | grep -o '"tag_name": *"[^"]*"' | head -n 1 | \
 		sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
 fi
 
-[ -n "$LATEST" ] || exit 0
-[ "$CURRENT" = "$LATEST" ] && exit 0
+# only plain dotted numbers count as a version (1, 1.0, v1.0.3, 1.0.3.1); anything else is ignored
+is_version() { printf '%s' "$1" | grep -Eq '^[vV]?[0-9]+(\.[0-9]+){0,3}$'; }
+is_version "$LATEST" && is_version "$CURRENT" || exit 0
+norm() { printf '%s' "$1" | sed 's/^[vV]//'; }
+LATEST=$(norm "$LATEST")
+CURRENT=$(norm "$CURRENT")
 
-RELEASE_URL="https://github.com/IGBerko/ittyOS/releases"
+# success (0) when $1 is a higher version than $2, compared number by number
+newer() {
+	i=1
+	while [ "$i" -le 4 ]; do
+		x=$(printf '%s' "$1" | awk -F. -v n="$i" '{print $n + 0}')
+		y=$(printf '%s' "$2" | awk -F. -v n="$i" '{print $n + 0}')
+		[ "$x" -gt "$y" ] && return 0
+		[ "$x" -lt "$y" ] && return 1
+		i=$((i + 1))
+	done
+	return 1
+}
+
+newer "$LATEST" "$CURRENT" || { [ "$NOW" = 1 ] && echo "ittyOS $CURRENT is up to date"; exit 0; }
+
+# one notification per new version (not at every login)
+STATE="${XDG_CACHE_HOME:-$HOME/.cache}/ittyos/last-notified"
+if [ "$NOW" = 0 ] && [ -r "$STATE" ] && [ "$(cat "$STATE" 2>/dev/null)" = "$LATEST" ]; then
+	exit 0
+fi
+mark() { mkdir -p "$(dirname "$STATE")" 2>/dev/null && printf '%s\n' "$LATEST" > "$STATE" 2>/dev/null; }
+
+RELEASE_URL="https://github.com/$REPO/releases"
 TITLE="ittyOS update available"
 MESSAGE="Installed: ${CURRENT}
 New: ${LATEST}
 
 Update a running system:
-  cd /path/to/ittyos && git pull
+  cd ~/ittyos && git pull
   sudo ./build.sh apply
 
 ${RELEASE_URL}"
 
 # Prefer a modal dialog; fall back to a tray notification.
 if command -v zenity >/dev/null 2>&1; then
-	zenity --warning --title="$TITLE" --text="$MESSAGE" --width=480 2>/dev/null
+	mark
+	zenity --info --title="$TITLE" --text="$MESSAGE" --width=480 2>/dev/null
 	exit 0
 fi
 if command -v kdialog >/dev/null 2>&1; then
-	kdialog --title "$TITLE" --sorry "$MESSAGE" 2>/dev/null
+	mark
+	kdialog --title "$TITLE" --msgbox "$MESSAGE" 2>/dev/null
 	exit 0
 fi
 if command -v yad >/dev/null 2>&1; then
-	yad --image="dialog-warning" --title="$TITLE" --text="$MESSAGE" --width=480 --button=OK:0 2>/dev/null
+	mark
+	yad --image="dialog-information" --title="$TITLE" --text="$MESSAGE" --width=480 --button=OK:0 2>/dev/null
 	exit 0
 fi
 if command -v notify-send >/dev/null 2>&1; then
-	notify-send -u critical -i dialog-warning \
-		"$TITLE" \
-		"Installed: ${CURRENT} → New: ${LATEST}\n${RELEASE_URL}"
+	mark
+	notify-send -i dialog-information "$TITLE" "Installed: ${CURRENT}, new: ${LATEST}
+${RELEASE_URL}"
 	exit 0
 fi
 
+# no graphical tool installed: at least say it in the terminal when run by hand
+[ "$NOW" = 1 ] && printf '%s\n\n(install zenity to get this as a window: flowkit -i zenity)\n' "$MESSAGE"
 exit 0

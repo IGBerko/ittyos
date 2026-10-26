@@ -6,7 +6,8 @@
 - XFCE terminal runs a login shell, so the `apk` and `help` aliases work there too.
 - **Update check**: `ittyos-check-update` compares `/etc/ittyos-version` with the
   `VERSION` file on GitHub and shows a dialog (zenity/kdialog/yad) or a tray
-  notification. Enabled via XDG autostart after desktop login.
+  notification, once per new version. Enabled via XDG autostart after desktop login;
+  opt out with a `no-update-check` file (see README). The installer copies it to the disk.
 
 ## 1.0.2
 - Protection in layers instead of a single engine:

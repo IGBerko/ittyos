@@ -116,6 +116,7 @@ cmd_apply() {
 	say "применение оверлея к системе"
 	cp -a "$STAGE/." /
 	say "готово: ittyOS $(cat "$HERE/VERSION" | tr -d '[:space:]'). Обои: ittyos-wallpaper (внутри рабочего стола)"
+	command -v zenity >/dev/null 2>&1 || say "чтобы уведомление об обновлении было окном: apk add zenity"
 }
 
 cmd_wsl() {

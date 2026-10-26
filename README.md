@@ -47,3 +47,8 @@ For a new user the wallpaper is applied automatically on first login.
 After a desktop login, `ittyos-check-update` runs once (XDG autostart). If
 `/etc/ittyos-version` is older than the `VERSION` file on GitHub, it shows a
 warning dialog (zenity / kdialog / yad) or a critical notification.
+It needs one of those tools: `flowkit -i zenity` is the simplest. It asks GitHub for the
+`VERSION` file at every desktop login (nothing else is sent) and shows each new version
+once. To turn it off: `sudo touch /etc/ittyos/no-update-check` (everyone) or
+`mkdir -p ~/.config/ittyos && touch ~/.config/ittyos/no-update-check` (one user).
+Run `ittyos-check-update --now` to check by hand.
