@@ -1,0 +1,47 @@
+#!/bin/sh
+# ittyos-desktop - install the XFCE desktop on a running ittyOS (run as root)
+#   ittyos-desktop       ask first
+#   ittyos-desktop -y    do not ask
+
+YES=0
+[ "${1:-}" = "-y" ] && YES=1
+
+if [ -t 1 ]; then
+	R=$(printf '\033[0m'); CY=$(printf '\033[36m'); RD=$(printf '\033[31m'); YL=$(printf '\033[33m')
+else
+	R=; CY=; RD=; YL=
+fi
+info() { printf '%s==>%s %s\n' "$CY" "$R" "$*"; }
+warn() { printf '%s !!%s %s\n' "$YL" "$R" "$*" >&2; }
+die()  { printf '%serror:%s %s\n' "$RD" "$R" "$*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || die "root privileges required: sudo ittyos-desktop"
+command -v setup-desktop >/dev/null 2>&1 || die "setup-desktop not found (package alpine-conf)"
+ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1 || die "no network (check: ip a, udhcpc -i eth0)"
+
+mem=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)
+[ "${mem:-0}" -lt 1500 ] && warn "less than 1.5 GB of RAM: the desktop will be slow"
+
+if [ "$YES" = 0 ]; then
+	printf 'Install XFCE (several hundred MB), notifications and a window tool? [y/N] '
+	read -r ans
+	case "$ans" in y|Y|yes|YES) ;; *) echo "cancelled"; exit 1 ;; esac
+fi
+
+info "installing XFCE"
+setup-desktop xfce || die "setup-desktop failed"
+
+info "installing notifications and the update-window tool"
+apk add xfce4-notifyd zenity || warn "could not install xfce4-notifyd/zenity: update notices may not be shown"
+
+# inside VirtualBox: mouse integration, screen resize, clipboard (best effort)
+if grep -qi virtualbox /sys/class/dmi/id/product_name 2>/dev/null; then
+	info "VirtualBox detected: guest additions"
+	apk add virtualbox-guest-additions virtualbox-guest-additions-x11 2>/dev/null \
+		|| warn "guest additions packages not found, skipped"
+	if [ -x /etc/init.d/virtualbox-guest-additions ]; then
+		rc-update add virtualbox-guest-additions default >/dev/null 2>&1
+	fi
+fi
+
+info "done. Reboot to start the graphical login: reboot"

@@ -23,7 +23,7 @@ die() { printf '\033[31mошибка:\033[0m %s\n' "$*" >&2; exit 1; }
 
 # Готовит оверлей: копирует файлы, красит motd, ставит права
 stage() {
-	say "подготовка оверлея"
+	say "preparing the overlay"
 	rm -rf "$STAGE"
 	mkdir -p "$STAGE"
 	cp -a "$HERE/overlay/." "$STAGE/"
@@ -113,10 +113,10 @@ cmd_iso() {
 cmd_apply() {
 	[ "$(id -u)" = 0 ] || die "apply запускается от root"
 	stage
-	say "применение оверлея к системе"
+	say "applying the overlay to the system"
 	cp -a "$STAGE/." /
-	say "готово: ittyOS $(cat "$HERE/VERSION" | tr -d '[:space:]'). Обои: ittyos-wallpaper (внутри рабочего стола)"
-	command -v zenity >/dev/null 2>&1 || say "чтобы уведомление об обновлении было окном: apk add zenity"
+	say "done: ittyOS $(cat "$HERE/VERSION" | tr -d '[:space:]'). Wallpaper: ittyos-wallpaper (inside the desktop)"
+	command -v zenity >/dev/null 2>&1 || say "for the update notice as a window: flowkit -i zenity (tray notices: flowkit -i xfce4-notifyd)"
 }
 
 cmd_wsl() {

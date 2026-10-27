@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.4
+- **`ittyos-update`**: update a running ittyOS with one command (`sudo ittyos-update`).
+  It keeps its own copy of the repository in `/var/lib/ittyos/src`, shows the installed and
+  the available version, asks for confirmation (`-y` to skip, `-f` to re-apply the same version)
+  and runs `build.sh apply`. No manual `git clone` needed.
+- **`ittyos-desktop`**: installs XFCE on a running system (`setup-desktop xfce`), plus
+  `xfce4-notifyd` and `zenity` so that update notices can be shown, plus VirtualBox guest
+  additions when run inside VirtualBox (best effort).
+- Update checker: falls back correctly when `notify-send` has no notification daemon
+  (the version is no longer marked as "already shown" in that case), stays quiet without a
+  graphical session, and the dialog now says `sudo ittyos-update`.
+- The installer copies `ittyos-update`, `ittyos-desktop` and the update checker to the disk.
+- `build.sh apply` messages are in English (readable on a plain console).
+
 ## 1.0.3
 - `help` now shows a readable overview of ittyOS commands (`help all` still lists every
   busybox command, `help flowkit` shows the package manager help).

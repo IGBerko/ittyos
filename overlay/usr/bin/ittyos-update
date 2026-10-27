@@ -1,0 +1,72 @@
+#!/bin/sh
+# ittyos-update - update a running ittyOS from its GitHub repository (run as root)
+#   ittyos-update        show the new version and ask before applying
+#   ittyos-update -y     do not ask
+#   ittyos-update -f     apply even when the version is the same (repair the system files)
+
+REPO_URL="${ITTYOS_REPO:-https://github.com/IGBerko/ittyos}"
+SRC="${ITTYOS_SRC:-/var/lib/ittyos/src}"
+VFILE="${ITTYOS_VERSION_FILE:-/etc/ittyos-version}"
+YES=0
+FORCE=0
+for a in "$@"; do
+	case "$a" in
+		-y) YES=1 ;;
+		-f) FORCE=1 ;;
+		-h|--help) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		*) echo "unknown option: $a (try -h)"; exit 1 ;;
+	esac
+done
+
+if [ -t 1 ]; then
+	R=$(printf '\033[0m'); B=$(printf '\033[1m'); CY=$(printf '\033[36m'); RD=$(printf '\033[31m')
+else
+	R=; B=; CY=; RD=
+fi
+info() { printf '%s==>%s %s\n' "$CY" "$R" "$*"; }
+die()  { printf '%serror:%s %s\n' "$RD" "$R" "$*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || die "root privileges required: sudo ittyos-update"
+command -v git >/dev/null 2>&1 || die "git not found: flowkit -i git"
+
+CURRENT=
+[ -r "$VFILE" ] && CURRENT=$(tr -d '[:space:]' <"$VFILE")
+[ -z "$CURRENT" ] && CURRENT=$(sed -n 's/^VERSION_ID=//p' /etc/os-release 2>/dev/null | tr -d '"[:space:]')
+
+FRESH=0
+if [ ! -d "$SRC/.git" ]; then
+	FRESH=1
+	info "first run: downloading ittyOS sources from $REPO_URL"
+	mkdir -p "$(dirname "$SRC")" || die "cannot create $(dirname "$SRC")"
+	git clone --depth 1 "$REPO_URL" "$SRC" || die "download failed (no network, or GitHub is unreachable)"
+else
+	info "checking $REPO_URL"
+	git -C "$SRC" fetch --depth 1 origin main || die "cannot reach GitHub"
+fi
+
+NEW_REF=FETCH_HEAD
+[ -f "$SRC/.git/FETCH_HEAD" ] || NEW_REF=HEAD
+NEW=$(git -C "$SRC" show "$NEW_REF:VERSION" 2>/dev/null | tr -d '[:space:]')
+NEW_COMMIT=$(git -C "$SRC" rev-parse --short "$NEW_REF" 2>/dev/null)
+OLD_COMMIT=$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null)
+[ -n "$NEW" ] || die "the repository has no VERSION file"
+
+printf '  installed : %s\n  available : %s (commit %s)\n' "${CURRENT:-unknown}" "$NEW" "$NEW_COMMIT"
+
+# a first download always offers to apply: the system may come from an older image of the same version
+if [ "$FRESH" = 0 ] && [ "$FORCE" = 0 ] && [ "$NEW" = "$CURRENT" ] && [ "$NEW_COMMIT" = "$OLD_COMMIT" ]; then
+	info "already up to date"
+	exit 0
+fi
+
+if [ "$YES" = 0 ]; then
+	printf '\n%sThis downloads code from %s and runs it as root.%s\n' "$B" "$REPO_URL" "$R"
+	printf 'Files shipped by ittyOS (motd, os-release, flowkit, configs, wallpapers) will be replaced;\nyour changes in them are lost. Packages and your own files are not touched.\n'
+	printf 'Continue? [y/N] '
+	read -r ans
+	case "$ans" in y|Y|yes|YES) ;; *) echo "cancelled"; exit 1 ;; esac
+fi
+
+git -C "$SRC" reset --hard "$NEW_REF" >/dev/null || die "cannot switch to the new version"
+sh "$SRC/build.sh" apply || die "applying the update failed"
+info "ittyOS is now $NEW. Log out and in (or reboot) to see everything."

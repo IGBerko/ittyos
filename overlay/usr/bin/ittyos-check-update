@@ -71,13 +71,17 @@ TITLE="ittyOS update available"
 MESSAGE="Installed: ${CURRENT}
 New: ${LATEST}
 
-Update a running system:
-  cd ~/ittyos && git pull
-  sudo ./build.sh apply
+Update with one command (in a terminal):
+  sudo ittyos-update
 
 ${RELEASE_URL}"
 
-# Prefer a modal dialog; fall back to a tray notification.
+# Windows and notifications need a graphical session: an autostart run without one shows nothing
+if [ "$NOW" = 0 ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+	exit 0
+fi
+
+# Prefer a modal dialog; then a tray notification.
 if command -v zenity >/dev/null 2>&1; then
 	mark
 	zenity --info --title="$TITLE" --text="$MESSAGE" --width=480 2>/dev/null
@@ -94,12 +98,17 @@ if command -v yad >/dev/null 2>&1; then
 	exit 0
 fi
 if command -v notify-send >/dev/null 2>&1; then
-	mark
-	notify-send -i dialog-information "$TITLE" "Installed: ${CURRENT}, new: ${LATEST}
-${RELEASE_URL}"
-	exit 0
+	# works only when a notification daemon runs (xfce4-notifyd); if it fails, say so below
+	if notify-send -i dialog-information "$TITLE" "Installed: ${CURRENT}, new: ${LATEST}
+Run: sudo ittyos-update" 2>/dev/null; then
+		mark
+		exit 0
+	fi
 fi
 
-# no graphical tool installed: at least say it in the terminal when run by hand
-[ "$NOW" = 1 ] && printf '%s\n\n(install zenity to get this as a window: flowkit -i zenity)\n' "$MESSAGE"
+# nothing could be shown: remember nothing, so the next login tries again
+if [ "$NOW" = 1 ]; then
+	printf '%s\n\n' "$MESSAGE"
+	echo "(no working window tool: for a window run 'flowkit -i zenity', for tray notifications 'flowkit -i xfce4-notifyd')"
+fi
 exit 0

@@ -38,8 +38,8 @@ Do not publish your abuild private key (`*.rsa`); only the public `.pub` key is 
 
 On an installed system (as root, with network access):
 
-    setup-desktop xfce
-    ./build.sh apply          # branding: wallpaper, login screen, terminal colors
+    ittyos-desktop            # XFCE + notifications (wraps setup-desktop xfce)
+    ittyos-update             # branding and the latest ittyOS files from GitHub
     ittyos-wallpaper          # inside the XFCE session, for an already existing profile
 
 For a new user the wallpaper is applied automatically on first login.
@@ -51,4 +51,5 @@ It needs one of those tools: `flowkit -i zenity` is the simplest. It asks GitHub
 `VERSION` file at every desktop login (nothing else is sent) and shows each new version
 once. To turn it off: `sudo touch /etc/ittyos/no-update-check` (everyone) or
 `mkdir -p ~/.config/ittyos && touch ~/.config/ittyos/no-update-check` (one user).
-Run `ittyos-check-update --now` to check by hand.
+Run `ittyos-check-update --now` to check by hand, and `sudo ittyos-update` to update.
+Without a notification daemon the tray notice cannot be shown: `flowkit -i xfce4-notifyd`.
