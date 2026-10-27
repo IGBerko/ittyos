@@ -44,6 +44,7 @@ machine needs network access; it restarts once when everything is done. Only XFC
 On an installed system (as root, with network access):
 
     ittyos-desktop            # XFCE + notifications (wraps setup-desktop xfce)
+    ittyos-disk               # disk manager like diskpart: list, create partitions, format
     ittyos-update             # branding and the latest ittyOS files from GitHub
     ittyos-wallpaper          # inside the XFCE session, for an already existing profile
 
@@ -58,3 +59,17 @@ once. To turn it off: `sudo touch /etc/ittyos/no-update-check` (everyone) or
 `mkdir -p ~/.config/ittyos && touch ~/.config/ittyos/no-update-check` (one user).
 Run `ittyos-check-update --now` to check by hand, and `sudo ittyos-update` to update.
 Without a notification daemon the tray notice cannot be shown: `flowkit -i xfce4-notifyd`.
+
+## Disk manager
+
+`sudo ittyos-disk` is a small diskpart-like tool:
+
+    list disk
+    select disk 1
+    clean
+    convert gpt
+    create partition size=20G type=linux
+    format fs=ext4 label=DATA
+    list partition
+
+`ittyos-disk -s commands.txt -y` runs the same commands from a file without questions.

@@ -2,7 +2,9 @@
 # ittyos-splash - boot splash (Plymouth) for ittyOS
 #   ittyos-splash enable     install Plymouth and turn the ittyOS splash on (root)
 #   ittyos-splash disable    turn it off again (root)
-#   ittyos-splash status
+#   ittyos-splash status     what is installed and what is missing
+#   ittyos-splash test       show the splash for a few seconds (debug log)
+#   ittyos-splash debug      write a Plymouth debug log on the next boot
 #
 # Plymouth is started from OpenRC, not from the initramfs (Alpine has no initramfs support
 # for it), so the splash appears a moment after the kernel starts. The boot never depends on it.
@@ -117,13 +119,60 @@ cmd_status() {
 		printf '  service   : not enabled\n'
 	fi
 	[ -e /etc/ittyos/no-splash ] && printf '  skip file : /etc/ittyos/no-splash exists, the splash is skipped\n'
+	if has_script_plugin; then
+		printf '  script.so : found\n'
+	else
+		printf '  script.so : NOT found (the ittyOS theme cannot work, a stock theme is used)\n'
+	fi
+	if [ -e "$THEME_DIR/ittyos/ittyos.plymouth" ]; then
+		printf '  theme file: found\n'
+	else
+		printf '  theme file: MISSING (%s/ittyos)\n' "$THEME_DIR"
+	fi
+	if [ -e /dev/dri/card0 ] || [ -e /dev/fb0 ]; then
+		printf '  display   : %s\n' "$(ls /dev/dri/card0 /dev/fb0 2>/dev/null | tr '\n' ' ')"
+	else
+		printf '  display   : no /dev/dri/card0 or /dev/fb0 (Plymouth has nothing to draw on)\n'
+	fi
+	if [ -r /run/plymouth/pid ] && kill -0 "$(cat /run/plymouth/pid 2>/dev/null)" 2>/dev/null; then
+		printf '  daemon    : running\n'
+	else
+		printf '  daemon    : not running\n'
+	fi
+	cmdline=$(cat /proc/cmdline 2>/dev/null)
+	case " $cmdline " in
+		*" quiet "*) printf '  quiet     : yes\n' ;;
+		*) printf '  quiet     : no (kernel messages are visible)\n' ;;
+	esac
 	return 0
+}
+
+# debug: next boot writes /var/log/ittyos-plymouth.log
+cmd_debug() {
+	need_root debug
+	mkdir -p /etc/ittyos && : > /etc/ittyos/splash-debug
+	info "debug on: reboot, then send /var/log/ittyos-plymouth.log (and: ittyos-splash status)"
+}
+
+# test: try to show the splash for a few seconds on the current screen
+cmd_test() {
+	need_root test
+	command -v plymouthd >/dev/null 2>&1 || die "plymouth is not installed (ittyos-splash enable)"
+	mkdir -p /run/plymouth
+	info "starting plymouthd for 6 seconds (log: /var/log/ittyos-plymouth-test.log)"
+	plymouthd --mode=boot --pid-file=/run/plymouth/pid --debug --debug-file=/var/log/ittyos-plymouth-test.log 2>&1
+	timeout 5 plymouth show-splash 2>&1
+	sleep 6
+	timeout 5 plymouth quit 2>&1
+	info "done. If nothing appeared, send: ittyos-splash status; tail -n 40 /var/log/ittyos-plymouth-test.log"
 }
 
 case "${1:-}" in
 	enable) cmd_enable ;;
 	disable) cmd_disable ;;
 	status|"") cmd_status ;;
-	-h|--help) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//' ;;
-	*) die "unknown command: $1 (enable, disable, status)" ;;
+	debug) cmd_debug ;;
+	test) cmd_test ;;
+	-h|--help) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//' ;;
+	*) die "unknown command: $1 (enable, disable, status, test, debug)" ;;
 esac

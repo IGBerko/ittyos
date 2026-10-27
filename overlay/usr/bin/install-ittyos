@@ -143,7 +143,7 @@ REPOS
 	find_root || { echo "root partition not found" > "$T/fail"; exit 1; }
 
 	step 60 "Installing packages..."
-	PKGS="tzdata chrony chrony-openrc"
+	PKGS="tzdata chrony chrony-openrc sfdisk util-linux"
 	[ $WANT_BASE = 1 ] && PKGS="$PKGS bash nano htop curl git sudo"
 	[ $WANT_AV = 1 ] && PKGS="$PKGS yara clamav freshclam"
 	# shellcheck disable=SC2086
@@ -152,7 +152,7 @@ REPOS
 
 	step 75 "Branding and flowkit..."
 	for f in /etc/os-release /etc/issue /etc/motd /etc/profile.d/flowkit.sh \
-		/usr/bin/flowkit /usr/bin/neofetch /usr/bin/install-ittyos /usr/bin/ittyos-wallpaper /usr/bin/ittyos-help /usr/bin/ittyos-check-update /usr/bin/ittyos-update /usr/bin/ittyos-desktop \
+		/usr/bin/flowkit /usr/bin/neofetch /usr/bin/install-ittyos /usr/bin/ittyos-wallpaper /usr/bin/ittyos-help /usr/bin/ittyos-check-update /usr/bin/ittyos-update /usr/bin/ittyos-desktop /usr/bin/ittyos-disk \
 		/usr/bin/ittyos-splash /usr/bin/ittyos-firstboot /etc/init.d/ittyos-splash /etc/init.d/ittyos-splash-quit \
 		/usr/share/plymouth/themes/ittyos \
 		/etc/ittyos-version /etc/xdg/autostart/ittyos-check-update.desktop \
@@ -195,10 +195,14 @@ REPOS
 ) | dialog --backtitle "$BT" --title "Installing ittyOS" --gauge "Preparing..." 9 64 0
 
 if [ -e "$T/fail" ]; then
+	REASON=$(cat "$T/fail")
+	echo "FAILED: $REASON" >> "$LOG"
 	mountpoint -q "$MNT" 2>/dev/null && umount "$MNT" 2>/dev/null
-	dialog --backtitle "$BT" --title "Installation failed: $(cat "$T/fail")" --textbox "$LOG" 22 76
+	dialog --backtitle "$BT" --title "Installation failed" --textbox "$LOG" 22 76
 	clear
-	echo "Installation failed. Log: $LOG"
+	echo "Installation failed: $REASON"
+	echo "Log: $LOG (last lines below)"
+	tail -n 15 "$LOG"
 	exit 1
 fi
 

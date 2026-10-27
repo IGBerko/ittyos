@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.6
+- **`ittyos-disk`**: a disk manager in the style of Windows `diskpart`. `list disk|partition|volume`,
+  `select disk N`, `select partition N`, `detail`, `create partition [size=2G] [type=...]`,
+  `delete partition`, `format fs=ext4|fat32|exfat|ntfs|xfs|btrfs|swap [label=NAME]`, `clean`,
+  `convert gpt|mbr`, `mount`/`unmount`. Destructive commands ask for `YES`; a disk with mounted
+  partitions is never changed. `ittyos-disk -s file` runs a script, `-y` skips the questions.
+  Missing mkfs tools are installed on demand. Included in the installer's copy list.
+- Installer: when the installation fails, the reason and the last log lines are printed on
+  the console and the reason is written to the log. `sfdisk` and `util-linux` are installed on
+  the new system.
+- Plymouth diagnostics: `ittyos-splash status` shows the plugin, theme, display device, daemon and
+  `quiet` state; `ittyos-splash test` shows the splash for a few seconds with a debug log;
+  `ittyos-splash debug` writes `/var/log/ittyos-plymouth.log` on the next boot. The splash service
+  now waits briefly for the graphics device (`/dev/fb0` or `/dev/dri/card0`).
+
 ## 1.0.5
 - **New installer flow**: after the system is written to the disk, the installer asks which
   desktop to add (none, XFCE, LXQt, MATE, KDE Plasma, GNOME, Sway). The choice is installed at

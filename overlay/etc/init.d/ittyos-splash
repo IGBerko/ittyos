@@ -14,7 +14,17 @@ start() {
 	[ -e /etc/ittyos/no-splash ] && return 0
 	ebegin "Starting the boot splash"
 	mkdir -p /run/plymouth
-	plymouthd --mode=boot --pid-file=/run/plymouth/pid --attach-to-session >/dev/null 2>&1
+	# the graphics driver is loaded asynchronously: wait a little for a display device
+	i=0
+	while [ $i -lt 10 ]; do
+		[ -e /dev/fb0 ] || [ -e /dev/dri/card0 ] && break
+		sleep 0.5 2>/dev/null || sleep 1
+		i=$((i + 1))
+	done
+	dbg=
+	[ -e /etc/ittyos/splash-debug ] && dbg="--debug --debug-file=/var/log/ittyos-plymouth.log"
+	# shellcheck disable=SC2086
+	plymouthd --mode=boot --pid-file=/run/plymouth/pid --attach-to-session $dbg >/dev/null 2>&1
 	timeout 5 plymouth show-splash >/dev/null 2>&1
 	eend 0
 }

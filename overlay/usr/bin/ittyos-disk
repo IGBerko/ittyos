@@ -1,0 +1,538 @@
+#!/bin/sh
+# ittyos-disk - disk manager in the style of Windows "diskpart"
+#
+#   ittyos-disk              interactive prompt (root)
+#   ittyos-disk -s FILE      run commands from a file (like "diskpart /s")
+#   ittyos-disk -y           do not ask for confirmation (needed when stdin is not a terminal)
+#
+# Commands: list disk | list partition | list volume | select disk N | select partition N
+#           detail disk | detail partition | clean | convert gpt|mbr
+#           create partition [size=MB] [type=linux|swap|efi|basic] | delete partition
+#           format fs=ext4|ext3|ext2|fat32|exfat|ntfs|xfs|btrfs|swap [label=NAME]
+#           mount [path] | unmount | rescan | help | exit
+
+SYSBLOCK="${ITTYOS_SYSBLOCK:-/sys/block}"
+DEVDIR="${ITTYOS_DEVDIR:-/dev}"
+PROC_MOUNTS="${ITTYOS_PROC_MOUNTS:-/proc/mounts}"
+MNT_BASE="${ITTYOS_MNT_BASE:-/mnt}"
+
+if [ -t 1 ]; then
+	R=$(printf '\033[0m'); B=$(printf '\033[1m'); CY=$(printf '\033[36m'); RD=$(printf '\033[31m'); YL=$(printf '\033[33m'); GR=$(printf '\033[32m')
+else
+	R=; B=; CY=; RD=; YL=; GR=
+fi
+err()  { printf '%s%s%s\n' "$RD" "$*" "$R" >&2; }
+ok()   { printf '%s%s%s\n' "$GR" "$*" "$R"; }
+warn() { printf '%s%s%s\n' "$YL" "$*" "$R"; }
+
+YES=0
+SCRIPT=
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-y|--yes) YES=1 ;;
+		-s) shift; SCRIPT="$1" ;;
+		-h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		*) err "unknown option: $1"; exit 1 ;;
+	esac
+	shift
+done
+
+if [ -z "${ITTYOS_DISK_TEST:-}" ] && [ "$(id -u)" != 0 ]; then
+	err "root privileges required: sudo ittyos-disk"
+	exit 1
+fi
+command -v sfdisk >/dev/null 2>&1 || {
+	err "sfdisk is not installed (apk add sfdisk)"
+	exit 1
+}
+
+SEL_DISK=      # name, e.g. sda
+SEL_DISK_N=
+SEL_PART=      # number
+INTERACTIVE=0
+[ -t 0 ] && [ -z "$SCRIPT" ] && INTERACTIVE=1
+
+# ---------- helpers ----------
+
+# sizes in bytes -> human readable
+human() {
+	awk -v b="$1" 'BEGIN{
+		if (b >= 1073741824) printf "%.1f GiB", b/1073741824;
+		else if (b >= 1048576) printf "%.0f MiB", b/1048576;
+		else printf "%.0f KiB", b/1024; }'
+}
+
+disk_list() {
+	for d in "$SYSBLOCK"/*; do
+		[ -e "$d" ] || continue
+		n=${d##*/}
+		case "$n" in loop*|ram*|zram*|dm-*|sr*|fd*|md*|nbd*) continue ;; esac
+		echo "$n"
+	done
+}
+
+disk_by_index() {
+	disk_list | sed -n "$(($1 + 1))p"
+}
+
+disk_bytes() { echo $(( $(cat "$SYSBLOCK/$1/size" 2>/dev/null || echo 0) * 512 )); }
+
+part_sep() {
+	case "$1" in nvme*|mmcblk*|loop*) echo p ;; *) echo "" ;; esac
+}
+
+part_dev() { echo "$DEVDIR/$1$(part_sep "$1")$2"; }
+
+# partition numbers of a disk, ascending
+part_numbers() {
+	for p in "$SYSBLOCK/$1"/"$1"*; do
+		[ -e "$p/partition" ] || continue
+		cat "$p/partition"
+	done | sort -n
+}
+
+part_sysdir() {
+	echo "$SYSBLOCK/$1/$1$(part_sep "$1")$2"
+}
+
+disk_label() {
+	l=$(sfdisk -d "$DEVDIR/$1" 2>/dev/null | sed -n 's/^label: //p' | head -n1)
+	case "$l" in gpt) echo GPT ;; dos) echo MBR ;; "") echo "-" ;; *) echo "$l" ;; esac
+}
+
+blk_attr() { # device attr
+	blkid "$1" 2>/dev/null | sed -n "s/.*[ :]$2=\"\\([^\"]*\\)\".*/\\1/p" | head -n1
+}
+
+mount_point() {
+	awk -v d="$1" '$1 == d { print $2; exit }' "$PROC_MOUNTS" 2>/dev/null
+}
+
+# is the disk or any of its partitions mounted?
+disk_busy() {
+	awk -v d="$DEVDIR/$1" 'index($1, d) == 1 { found = 1 } END { exit !found }' "$PROC_MOUNTS" 2>/dev/null
+}
+
+confirm() {
+	[ "$YES" = 1 ] && return 0
+	if [ "$INTERACTIVE" != 1 ]; then
+		err "not interactive: add -y to confirm destructive commands"
+		return 1
+	fi
+	printf '%s%s%s Type YES to continue: ' "$YL" "$1" "$R"
+	read -r a || return 1
+	[ "$a" = YES ]
+}
+
+need_disk() {
+	[ -n "$SEL_DISK" ] || { err "no disk selected: select disk N"; return 1; }
+	[ -e "$SYSBLOCK/$SEL_DISK" ] || { err "disk $SEL_DISK has disappeared (rescan)"; SEL_DISK=; SEL_PART=; return 1; }
+	return 0
+}
+
+need_part() {
+	need_disk || return 1
+	[ -n "$SEL_PART" ] || { err "no partition selected: select partition N"; return 1; }
+	[ -e "$(part_sysdir "$SEL_DISK" "$SEL_PART")" ] || { err "partition $SEL_PART does not exist"; SEL_PART=; return 1; }
+	return 0
+}
+
+not_busy() {
+	if disk_busy "$SEL_DISK"; then
+		err "the disk has mounted partitions: unmount them first (select partition N, unmount)"
+		return 1
+	fi
+	return 0
+}
+
+# key=value option from the arguments
+opt() {
+	k=$1; shift
+	for a in "$@"; do
+		case "$a" in "$k"=*) echo "${a#*=}"; return 0 ;; esac
+	done
+	return 1
+}
+
+reread() {
+	sync
+	blockdev --rereadpt "$DEVDIR/$1" >/dev/null 2>&1
+	command -v partprobe >/dev/null 2>&1 && partprobe "$DEVDIR/$1" >/dev/null 2>&1
+	command -v mdev >/dev/null 2>&1 && mdev -s >/dev/null 2>&1
+	sleep 1
+	return 0
+}
+
+# wait until the device node of a new partition exists
+wait_node() {
+	i=0
+	while [ $i -lt 20 ]; do
+		[ -e "$1" ] && return 0
+		command -v mdev >/dev/null 2>&1 && mdev -s >/dev/null 2>&1
+		sleep 0.3 2>/dev/null || sleep 1
+		i=$((i + 1))
+	done
+	[ -e "$1" ]
+}
+
+# ---------- commands ----------
+
+cmd_list_disk() {
+	printf '\n  %s%-6s %-8s %-11s %-6s %s%s\n' "$B" "Disk" "Name" "Size" "Table" "Model" "$R"
+	printf '  %s\n' "-------------------------------------------------"
+	n=0
+	for d in $(disk_list); do
+		model=$(tr -s ' ' < "$SYSBLOCK/$d/device/model" 2>/dev/null | sed 's/ *$//')
+		mark=" "; [ "$d" = "$SEL_DISK" ] && mark="*"
+		printf ' %s%-6s %-8s %-11s %-6s %s\n' "$mark" "Disk $n" "$d" "$(human "$(disk_bytes "$d")")" "$(disk_label "$d")" "$model"
+		n=$((n + 1))
+	done
+	[ $n -eq 0 ] && echo "  no disks found"
+	echo
+}
+
+cmd_list_part() {
+	need_disk || return 1
+	printf '\n  Disk %s (%s)\n' "$SEL_DISK" "$(human "$(disk_bytes "$SEL_DISK")")"
+	printf '  %s%-12s %-11s %-8s %-10s %s%s\n' "$B" "Partition" "Size" "FS" "Label" "Mounted" "$R"
+	printf '  %s\n' "-------------------------------------------------"
+	cnt=0
+	for n in $(part_numbers "$SEL_DISK"); do
+		dev=$(part_dev "$SEL_DISK" "$n")
+		sz=$(( $(cat "$(part_sysdir "$SEL_DISK" "$n")/size") * 512 ))
+		mark=" "; [ "$n" = "$SEL_PART" ] && mark="*"
+		printf ' %s%-12s %-11s %-8s %-10s %s\n' "$mark" "Partition $n" "$(human "$sz")" \
+			"$(blk_attr "$dev" TYPE)" "$(blk_attr "$dev" LABEL)" "$(mount_point "$dev")"
+		cnt=$((cnt + 1))
+	done
+	[ $cnt -eq 0 ] && echo "  no partitions on this disk"
+	echo
+}
+
+cmd_list_volume() {
+	printf '\n  %s%-12s %-11s %-8s %-10s %s%s\n' "$B" "Device" "Size" "FS" "Label" "Mounted" "$R"
+	printf '  %s\n' "-------------------------------------------------"
+	for d in $(disk_list); do
+		for n in $(part_numbers "$d"); do
+			dev=$(part_dev "$d" "$n")
+			sz=$(( $(cat "$(part_sysdir "$d" "$n")/size") * 512 ))
+			printf '  %-12s %-11s %-8s %-10s %s\n' "${dev##*/}" "$(human "$sz")" \
+				"$(blk_attr "$dev" TYPE)" "$(blk_attr "$dev" LABEL)" "$(mount_point "$dev")"
+		done
+	done
+	echo
+}
+
+cmd_select() {
+	case "$1" in
+		disk)
+			[ -n "$2" ] || { err "usage: select disk N"; return 1; }
+			case "$2" in
+				*[!0-9]*)
+					# a name such as sdb is accepted too
+					name=${2#/dev/}
+					[ -e "$SYSBLOCK/$name" ] || { err "no such disk: $2"; return 1; }
+					;;
+				*)
+					name=$(disk_by_index "$2")
+					[ -n "$name" ] || { err "no disk with number $2 (list disk)"; return 1; }
+					;;
+			esac
+			SEL_DISK=$name; SEL_PART=
+			ok "Disk $SEL_DISK is now the selected disk." ;;
+		partition|part)
+			need_disk || return 1
+			[ -n "$2" ] || { err "usage: select partition N"; return 1; }
+			[ -e "$(part_sysdir "$SEL_DISK" "$2")" ] || { err "no partition $2 on $SEL_DISK (list partition)"; return 1; }
+			SEL_PART=$2
+			ok "Partition $SEL_PART is now the selected partition." ;;
+		*) err "usage: select disk N | select partition N" ; return 1 ;;
+	esac
+}
+
+cmd_detail() {
+	case "$1" in
+		disk)
+			need_disk || return 1
+			dev="$DEVDIR/$SEL_DISK"
+			model=$(tr -s ' ' < "$SYSBLOCK/$SEL_DISK/device/model" 2>/dev/null | sed 's/ *$//')
+			printf '\n  Disk       : %s\n  Model      : %s\n  Size       : %s\n  Table      : %s\n  Removable  : %s\n  Mounted    : %s\n' \
+				"$dev" "${model:--}" "$(human "$(disk_bytes "$SEL_DISK")")" "$(disk_label "$SEL_DISK")" \
+				"$([ "$(cat "$SYSBLOCK/$SEL_DISK/removable" 2>/dev/null)" = 1 ] && echo yes || echo no)" \
+				"$(disk_busy "$SEL_DISK" && echo yes || echo no)"
+			cmd_list_part ;;
+		partition|part)
+			need_part || return 1
+			dev=$(part_dev "$SEL_DISK" "$SEL_PART")
+			sz=$(( $(cat "$(part_sysdir "$SEL_DISK" "$SEL_PART")/size") * 512 ))
+			printf '\n  Partition  : %s\n  Size       : %s\n  FS         : %s\n  Label      : %s\n  UUID       : %s\n  Mounted at : %s\n\n' \
+				"$dev" "$(human "$sz")" "$(blk_attr "$dev" TYPE)" "$(blk_attr "$dev" LABEL)" \
+				"$(blk_attr "$dev" UUID)" "$(mount_point "$dev")" ;;
+		*) err "usage: detail disk | detail partition"; return 1 ;;
+	esac
+}
+
+cmd_clean() {
+	need_disk || return 1
+	not_busy || return 1
+	dev="$DEVDIR/$SEL_DISK"
+	confirm "ALL DATA on $dev ($(human "$(disk_bytes "$SEL_DISK")")) will be erased." || { err "cancelled"; return 1; }
+	for n in $(part_numbers "$SEL_DISK"); do
+		dd if=/dev/zero of="$(part_dev "$SEL_DISK" "$n")" bs=1M count=16 >/dev/null 2>&1
+	done
+	mb=$(( $(disk_bytes "$SEL_DISK") / 1048576 ))
+	dd if=/dev/zero of="$dev" bs=1M count=2 >/dev/null 2>&1
+	[ "$mb" -gt 4 ] && dd if=/dev/zero of="$dev" bs=1M seek=$((mb - 2)) count=2 >/dev/null 2>&1
+	reread "$SEL_DISK"
+	SEL_PART=
+	ok "The disk was cleaned: no partition table, no signatures."
+}
+
+cmd_convert() {
+	need_disk || return 1
+	case "$1" in
+		gpt) lab=gpt ;;
+		mbr|dos) lab=dos ;;
+		*) err "usage: convert gpt | convert mbr"; return 1 ;;
+	esac
+	if [ -n "$(part_numbers "$SEL_DISK")" ]; then
+		err "the disk has partitions: run 'clean' first (this erases everything)"
+		return 1
+	fi
+	not_busy || return 1
+	if echo "label: $lab" | sfdisk "$DEVDIR/$SEL_DISK" >/dev/null 2>&1; then
+		reread "$SEL_DISK"
+		ok "The disk now has an empty $1 table."
+	else
+		err "sfdisk failed"; return 1
+	fi
+}
+
+size_to_mib() {
+	s=$(echo "$1" | tr 'A-Z' 'a-z')
+	case "$s" in
+		*gb) n=${s%gb}; m=1024 ;;
+		*g)  n=${s%g};  m=1024 ;;
+		*mb) n=${s%mb}; m=1 ;;
+		*m)  n=${s%m};  m=1 ;;
+		*)   n=$s; m=1 ;;
+	esac
+	case "$n" in ""|*[!0-9]*) return 1 ;; esac
+	[ "$n" -gt 0 ] || return 1
+	echo $((n * m))
+}
+
+cmd_create() {
+	[ "$1" = partition ] || [ "$1" = part ] || { err "usage: create partition [size=MB] [type=linux|swap|efi|basic]"; return 1; }
+	shift
+	need_disk || return 1
+	not_busy || return 1
+	dev="$DEVDIR/$SEL_DISK"
+
+	size=; spec_size=
+	if v=$(opt size "$@"); then
+		size=$(size_to_mib "$v") || { err "bad size: $v (examples: size=500, size=2G)"; return 1; }
+		spec_size="size=${size}MiB,"
+	fi
+	t=$(opt type "$@") || t=linux
+
+	lab=$(sfdisk -d "$dev" 2>/dev/null | sed -n 's/^label: //p' | head -n1)
+	if [ -z "$lab" ]; then
+		warn "The disk has no partition table: a GPT table will be created (use 'convert mbr' first for MBR)."
+		echo "label: gpt" | sfdisk "$dev" >/dev/null 2>&1 || { err "could not create the partition table"; return 1; }
+		lab=gpt
+	fi
+	case "$t" in
+		linux) code=L ;;
+		swap) code=S ;;
+		efi) code=U ;;
+		basic) if [ "$lab" = gpt ]; then code=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7; else code=7; fi ;;
+		*) err "unknown type: $t (linux, swap, efi, basic)"; return 1 ;;
+	esac
+
+	before=$(part_numbers "$SEL_DISK" | tr '\n' ' ')
+	out=$(echo "${spec_size}type=$code" | sfdisk --append "$dev" 2>&1) || {
+		err "could not create the partition (not enough free space or too many partitions):"
+		echo "$out" | tail -n 3 >&2
+		return 1
+	}
+	reread "$SEL_DISK"
+	newn=
+	for n in $(part_numbers "$SEL_DISK"); do
+		case " $before" in *" $n "*) ;; *) newn=$n ;; esac
+	done
+	if [ -n "$newn" ]; then
+		SEL_PART=$newn
+		wait_node "$(part_dev "$SEL_DISK" "$newn")"
+		ok "Partition $newn created and selected. Next: format fs=ext4 label=NAME"
+	else
+		ok "Partition created (run 'list partition')."
+	fi
+}
+
+cmd_delete() {
+	[ "$1" = partition ] || [ "$1" = part ] || { err "usage: delete partition"; return 1; }
+	need_part || return 1
+	dev=$(part_dev "$SEL_DISK" "$SEL_PART")
+	if [ -n "$(mount_point "$dev")" ]; then
+		err "$dev is mounted: unmount it first"
+		return 1
+	fi
+	confirm "Partition $SEL_PART of $SEL_DISK ($dev) will be deleted with all its data." || { err "cancelled"; return 1; }
+	dd if=/dev/zero of="$dev" bs=1M count=16 >/dev/null 2>&1
+	if sfdisk --delete "$DEVDIR/$SEL_DISK" "$SEL_PART" >/dev/null 2>&1; then
+		reread "$SEL_DISK"
+		SEL_PART=
+		ok "The partition was deleted."
+	else
+		err "sfdisk could not delete the partition"; return 1
+	fi
+}
+
+pkg_for() {
+	case "$1" in
+		ext2|ext3|ext4) echo e2fsprogs ;;
+		fat32) echo dosfstools ;;
+		exfat) echo exfatprogs ;;
+		ntfs) echo ntfs-3g-progs ;;
+		xfs) echo xfsprogs ;;
+		btrfs) echo btrfs-progs ;;
+		*) echo "" ;;
+	esac
+}
+
+cmd_format() {
+	need_part || return 1
+	dev=$(part_dev "$SEL_DISK" "$SEL_PART")
+	fs=$(opt fs "$@") || fs=ext4
+	label=$(opt label "$@") || label=
+	if [ -n "$(mount_point "$dev")" ]; then
+		err "$dev is mounted: unmount it first"
+		return 1
+	fi
+	case "$fs" in
+		ext2|ext3|ext4) tool=mkfs.$fs ;;
+		fat32|fat|vfat) fs=fat32; tool=mkfs.vfat ;;
+		exfat) tool=mkfs.exfat ;;
+		ntfs) tool=mkfs.ntfs ;;
+		xfs) tool=mkfs.xfs ;;
+		btrfs) tool=mkfs.btrfs ;;
+		swap) tool=mkswap ;;
+		*) err "unknown file system: $fs (ext4, ext3, ext2, fat32, exfat, ntfs, xfs, btrfs, swap)"; return 1 ;;
+	esac
+	if ! command -v "$tool" >/dev/null 2>&1; then
+		pkg=$(pkg_for "$fs")
+		if [ -n "$pkg" ] && [ "$INTERACTIVE" = 1 -o "$YES" = 1 ]; then
+			warn "$tool is missing: installing $pkg"
+			apk add "$pkg" >/dev/null 2>&1 || { err "could not install $pkg (network?)"; return 1; }
+		fi
+		command -v "$tool" >/dev/null 2>&1 || { err "$tool is not available${pkg:+ (apk add $pkg)}"; return 1; }
+	fi
+	confirm "$dev will be formatted as $fs. All data on it will be lost." || { err "cancelled"; return 1; }
+	case "$fs" in
+		ext2|ext3|ext4) "$tool" -F ${label:+-L "$label"} "$dev" ;;
+		fat32) "$tool" -F 32 ${label:+-n "$(echo "$label" | tr 'a-z' 'A-Z' | cut -c1-11)"} "$dev" ;;
+		exfat) "$tool" ${label:+-L "$label"} "$dev" ;;
+		ntfs) "$tool" -F -f ${label:+-L "$label"} "$dev" ;;
+		xfs) "$tool" -f ${label:+-L "$label"} "$dev" ;;
+		btrfs) "$tool" -f ${label:+-L "$label"} "$dev" ;;
+		swap) "$tool" ${label:+-L "$label"} "$dev" ;;
+	esac >/dev/null 2>&1 && ok "$dev formatted as $fs." || { err "formatting failed"; return 1; }
+}
+
+cmd_mount() {
+	need_part || return 1
+	dev=$(part_dev "$SEL_DISK" "$SEL_PART")
+	if [ -n "$(mount_point "$dev")" ]; then err "already mounted at $(mount_point "$dev")"; return 1; fi
+	target=${1:-$MNT_BASE/${dev##*/}}
+	mkdir -p "$target" && mount "$dev" "$target" 2>/dev/null \
+		&& ok "$dev mounted at $target" || { err "could not mount $dev (no file system?)"; return 1; }
+}
+
+cmd_unmount() {
+	need_part || return 1
+	dev=$(part_dev "$SEL_DISK" "$SEL_PART")
+	mp=$(mount_point "$dev")
+	[ -n "$mp" ] || { err "$dev is not mounted"; return 1; }
+	umount "$mp" 2>/dev/null && ok "$dev unmounted." || { err "could not unmount $mp (busy?)"; return 1; }
+}
+
+cmd_rescan() {
+	command -v mdev >/dev/null 2>&1 && mdev -s >/dev/null 2>&1
+	ok "Rescan done."
+}
+
+cmd_help() {
+	cat <<EOF
+
+  list disk | partition | volume   show disks, partitions of the selected disk, all volumes
+  select disk N                    choose a disk (number from "list disk", or a name like sdb)
+  select partition N               choose a partition of the selected disk
+  detail disk | partition          details of the selected disk or partition
+  clean                            erase the partition table and signatures of the disk
+  convert gpt | mbr                set the table type (the disk must be empty)
+  create partition [size=MB] [type=linux|swap|efi|basic]
+                                   size in MiB (500, 2G); default is all free space
+  delete partition                 delete the selected partition
+  format fs=ext4 [label=NAME]      ext2 ext3 ext4 fat32 exfat ntfs xfs btrfs swap
+  mount [path] | unmount           mount or unmount the selected partition
+  rescan                           re-read the disks
+  exit                             leave
+
+  Destructive commands ask for YES. A disk with mounted partitions is never changed.
+
+EOF
+}
+
+dispatch() {
+	# shellcheck disable=SC2086
+	set -- $(echo "$1" | tr 'A-Z' 'a-z')
+	[ $# -gt 0 ] || return 0
+	c=$1; shift
+	case "$c" in
+		list|ls)
+			case "$1" in
+				disk|disks) cmd_list_disk ;;
+				partition|part|partitions) cmd_list_part ;;
+				volume|vol|volumes) cmd_list_volume ;;
+				*) err "usage: list disk | list partition | list volume" ;;
+			esac ;;
+		select|sel) cmd_select "$@" ;;
+		detail) cmd_detail "$@" ;;
+		clean) cmd_clean ;;
+		convert) cmd_convert "$@" ;;
+		create) cmd_create "$@" ;;
+		delete) cmd_delete "$@" ;;
+		format) cmd_format "$@" ;;
+		mount) cmd_mount "$@" ;;
+		unmount|umount) cmd_unmount ;;
+		rescan) cmd_rescan ;;
+		help|\?) cmd_help ;;
+		exit|quit) return 99 ;;
+		*) err "unknown command: $c (type help)" ;;
+	esac
+	return 0
+}
+
+# ---------- main loop ----------
+
+[ "$INTERACTIVE" = 1 ] && printf '\n%sittyOS disk manager%s  -  type "help" for commands, "list disk" to begin\n\n' "$B" "$R"
+
+if [ -n "$SCRIPT" ]; then
+	[ -r "$SCRIPT" ] || { err "cannot read $SCRIPT"; exit 1; }
+	exec < "$SCRIPT"
+fi
+
+while :; do
+	if [ "$INTERACTIVE" = 1 ]; then
+		p="ittydisk"
+		[ -n "$SEL_DISK" ] && p="$p [$SEL_DISK${SEL_PART:+:$SEL_PART}]"
+		printf '%s%s>%s ' "$CY" "$p" "$R"
+	fi
+	read -r line || break
+	case "$line" in "#"*|"") continue ;; esac
+	[ "$INTERACTIVE" != 1 ] && printf '> %s\n' "$line"
+	dispatch "$line"
+	[ $? -eq 99 ] && break
+done
+exit 0
