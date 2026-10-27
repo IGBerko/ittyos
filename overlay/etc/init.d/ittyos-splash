@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# ittyOS boot splash (Plymouth), started from OpenRC.
+# Never fails the boot: every step is optional and time-limited.
+
+description="ittyOS boot splash (Plymouth)"
+
+depend() {
+	need sysfs devfs
+	after mdev udev hwdrivers modules
+}
+
+start() {
+	command -v plymouthd >/dev/null 2>&1 || return 0
+	[ -e /etc/ittyos/no-splash ] && return 0
+	ebegin "Starting the boot splash"
+	mkdir -p /run/plymouth
+	plymouthd --mode=boot --pid-file=/run/plymouth/pid --attach-to-session >/dev/null 2>&1
+	timeout 5 plymouth show-splash >/dev/null 2>&1
+	eend 0
+}
+
+stop() {
+	command -v plymouth >/dev/null 2>&1 || return 0
+	timeout 5 plymouth quit >/dev/null 2>&1
+	return 0
+}

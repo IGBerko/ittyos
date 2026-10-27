@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.5
+- **New installer flow**: after the system is written to the disk, the installer asks which
+  desktop to add (none, XFCE, LXQt, MATE, KDE Plasma, GNOME, Sway). The choice is installed at
+  the first boot of the new system (`ittyos-firstboot`, needs the network, restarts once when
+  done, retries up to 3 boots, log in `/var/log/ittyos-firstboot.log`). Only XFCE has ittyOS
+  branding; the others are plain `setup-desktop` installs and are not tested by ittyOS.
+- **Plymouth boot splash** with an ittyOS theme: `ittyos-splash enable|disable|status`, a new
+  "Boot splash" component in the installer (on by default, experimental). It is started from
+  OpenRC, not from the initramfs, because Alpine has no initramfs support for Plymouth; the
+  boot never depends on it. To skip it once: create `/etc/ittyos/no-splash`.
+- `ittyos-desktop [xfce|lxqt|mate|plasma|gnome|sway]` takes the desktop name.
+
 ## 1.0.4
 - **`ittyos-update`**: update a running ittyOS with one command (`sudo ittyos-update`).
   It keeps its own copy of the repository in `/var/lib/ittyos/src`, shows the installed and

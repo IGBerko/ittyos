@@ -1,0 +1,17 @@
+#!/sbin/openrc-run
+# Hides the ittyOS boot splash before the login screen / console appears.
+
+description="Close the ittyOS boot splash"
+
+depend() {
+	need localmount
+	after networking chronyd
+	before lightdm sddm gdm greetd
+}
+
+start() {
+	command -v plymouth >/dev/null 2>&1 || return 0
+	ebegin "Closing the boot splash"
+	timeout 8 plymouth quit >/dev/null 2>&1
+	eend 0
+}

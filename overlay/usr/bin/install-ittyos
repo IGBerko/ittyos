@@ -89,12 +89,14 @@ ask --title "Timezone" --menu "Choose your timezone:" 16 56 8 \
 TZN=$ANS
 
 # --- Components ---
-ask --title "Components" --checklist "Additional components:" 12 62 3 \
+ask --title "Components" --checklist "Additional components:" 13 66 4 \
 	av "YARA + ClamAV protection (flowkit scan)" on \
-	base "bash, nano, htop, curl, git, sudo" on || cancel
-WANT_AV=0; WANT_BASE=0
+	base "bash, nano, htop, curl, git, sudo" on \
+	splash "Boot splash (Plymouth, experimental)" on || cancel
+WANT_AV=0; WANT_BASE=0; WANT_SPLASH=0
 case $ANS in *av*) WANT_AV=1 ;; esac
 case $ANS in *base*) WANT_BASE=1 ;; esac
+case $ANS in *splash*) WANT_SPLASH=1 ;; esac
 
 ask --title "Confirm" --yes-label "Install" --no-label "Cancel" --yesno \
 "Disk:        /dev/$DISK  (will be ERASED)
@@ -102,8 +104,10 @@ Hostname:    $HOSTN
 User:        $USERN
 Timezone:    $TZN
 Antivirus:   $([ $WANT_AV = 1 ] && echo yes || echo no)
+Boot splash: $([ $WANT_SPLASH = 1 ] && echo yes || echo no)
 
-Start the installation?" 14 62 || cancel
+The desktop is chosen after the installation.
+Start the installation?" 16 62 || cancel
 
 # --- Installation ---
 step() { printf 'XXX\n%s\n%s\nXXX\n' "$1" "$2"; }
@@ -149,6 +153,8 @@ REPOS
 	step 75 "Branding and flowkit..."
 	for f in /etc/os-release /etc/issue /etc/motd /etc/profile.d/flowkit.sh \
 		/usr/bin/flowkit /usr/bin/neofetch /usr/bin/install-ittyos /usr/bin/ittyos-wallpaper /usr/bin/ittyos-help /usr/bin/ittyos-check-update /usr/bin/ittyos-update /usr/bin/ittyos-desktop \
+		/usr/bin/ittyos-splash /usr/bin/ittyos-firstboot /etc/init.d/ittyos-splash /etc/init.d/ittyos-splash-quit \
+		/usr/share/plymouth/themes/ittyos \
 		/etc/ittyos-version /etc/xdg/autostart/ittyos-check-update.desktop \
 		/etc/ittyos /usr/share/ittyos /etc/chrony/chrony.conf /etc/lightdm/lightdm-gtk-greeter.conf \
 		/etc/xdg/xfce4/terminal /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml \
@@ -185,7 +191,6 @@ REPOS
 
 	step 97 "Finishing..."
 	sync
-	umount "$MNT" >>"$LOG" 2>&1
 	step 100 "Done"
 ) | dialog --backtitle "$BT" --title "Installing ittyOS" --gauge "Preparing..." 9 64 0
 
@@ -197,11 +202,44 @@ if [ -e "$T/fail" ]; then
 	exit 1
 fi
 
+# --- Desktop environment: chosen now, installed at the first boot of the new system ---
+ask --title "Desktop environment" --menu "The system is on the disk. Choose a desktop to add.\nIt is downloaded at the first boot of the new system (network needed)." 20 74 7 \
+	none "Console only, no desktop" \
+	xfce "XFCE - light, with ittyOS branding (recommended)" \
+	lxqt "LXQt - very light (not tested by ittyOS)" \
+	mate "MATE - classic (not tested by ittyOS)" \
+	plasma "KDE Plasma - heavy (not tested by ittyOS)" \
+	gnome "GNOME - heavy (not tested by ittyOS)" \
+	sway "Sway - tiling, Wayland (not tested by ittyOS)"
+rc=$?
+if [ "$rc" -eq 0 ]; then DESKTOP=$ANS; else DESKTOP=none; fi
+
+FB=0
+[ "$DESKTOP" != none ] && FB=1
+[ "$WANT_SPLASH" = 1 ] && FB=1
+if [ "$FB" = 1 ]; then
+	mkdir -p "$MNT/etc/ittyos" "$MNT/etc/local.d"
+	printf 'DESKTOP=%s\nSPLASH=%s\nTRIES=0\n' "$DESKTOP" "$WANT_SPLASH" > "$MNT/etc/ittyos/firstboot.conf"
+	printf '#!/bin/sh\nexec /usr/bin/ittyos-firstboot\n' > "$MNT/etc/local.d/10-ittyos-firstboot.start"
+	chmod +x "$MNT/etc/local.d/10-ittyos-firstboot.start"
+	chroot "$MNT" rc-update add local default >>"$LOG" 2>&1
+fi
+sync
+umount "$MNT" >>"$LOG" 2>&1
+
+if [ "$FB" = 1 ]; then
+	NOTE="At the first boot the new system installs the desktop and/or the boot splash by itself (network needed, a few minutes), then restarts once. Progress is shown on the screen, log: /var/log/ittyos-firstboot.log."
+else
+	NOTE="Nothing more to set up."
+fi
+
 if ask --title "Done" --yes-label "Reboot" --no-label "Stay" --yesno \
 "ittyOS has been installed to /dev/$DISK.
 
 Remove the installation ISO and reboot the machine.
-Log in as $USERN (or root) with the password you set." 12 62; then
+Log in as $USERN (or root) with the password you set.
+
+$NOTE" 17 66; then
 	clear
 	reboot
 fi

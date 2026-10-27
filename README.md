@@ -8,6 +8,7 @@ A small Linux distribution built on [Alpine Linux](https://alpinelinux.org/)
   packages are scanned with ClamAV before they are installed, when its databases are available
 - **install-ittyos** - text-mode graphical installer (dialog)
 - **neofetch** and a colored motd
+- Boot splash (Plymouth) with an ittyOS theme: `ittyos-splash enable|disable|status`
 - XFCE desktop branding (wallpaper, login screen, terminal colors)
 - **ittyos-check-update** - notifies on desktop login when a newer version is on GitHub
 
@@ -35,6 +36,10 @@ repository are released under the MIT license (see `LICENSE`).
 Do not publish your abuild private key (`*.rsa`); only the public `.pub` key is needed.
 
 ## Desktop
+
+`install-ittyos` asks which desktop to add after the installation (XFCE, LXQt, MATE, KDE Plasma,
+GNOME, Sway or none). It is downloaded and installed at the first boot of the new system, so the
+machine needs network access; it restarts once when everything is done. Only XFCE is branded.
 
 On an installed system (as root, with network access):
 

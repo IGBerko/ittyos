@@ -1,0 +1,129 @@
+#!/bin/sh
+# ittyos-splash - boot splash (Plymouth) for ittyOS
+#   ittyos-splash enable     install Plymouth and turn the ittyOS splash on (root)
+#   ittyos-splash disable    turn it off again (root)
+#   ittyos-splash status
+#
+# Plymouth is started from OpenRC, not from the initramfs (Alpine has no initramfs support
+# for it), so the splash appears a moment after the kernel starts. The boot never depends on it.
+
+STATE="${ITTYOS_STATE:-/etc/ittyos/splash.state}"
+PLY_CONF="${ITTYOS_PLYMOUTH_CONF:-/etc/plymouth/plymouthd.conf}"
+THEME_DIR="${ITTYOS_THEME_DIR:-/usr/share/plymouth/themes}"
+EXTLINUX="${ITTYOS_EXTLINUX:-/etc/update-extlinux.conf}"
+GRUBCFG="${ITTYOS_GRUB:-/etc/default/grub}"
+PLUGIN_DIRS="${ITTYOS_PLUGIN_DIRS:-/usr/lib/plymouth /usr/lib64/plymouth}"
+
+if [ -t 1 ]; then
+	R=$(printf '\033[0m'); CY=$(printf '\033[36m'); RD=$(printf '\033[31m'); YL=$(printf '\033[33m')
+else
+	R=; CY=; RD=; YL=
+fi
+info() { printf '%s==>%s %s\n' "$CY" "$R" "$*"; }
+warn() { printf '%s !!%s %s\n' "$YL" "$R" "$*" >&2; }
+die()  { printf '%serror:%s %s\n' "$RD" "$R" "$*" >&2; exit 1; }
+need_root() { [ "$(id -u)" = 0 ] || die "root privileges required: sudo ittyos-splash $1"; }
+
+has_script_plugin() {
+	for d in $PLUGIN_DIRS; do
+		[ -e "$d/script.so" ] && return 0
+	done
+	return 1
+}
+
+# "quiet" hides kernel messages under the splash. Alpine usually has it already.
+add_quiet() {
+	if [ -f "$EXTLINUX" ]; then
+		if grep -E '^default_kernel_opts=' "$EXTLINUX" | grep -qw quiet; then
+			return 0
+		fi
+		sed -i 's/^\(default_kernel_opts="[^"]*\)"/\1 quiet"/' "$EXTLINUX" || return 1
+		echo "quiet_added=extlinux" >> "$STATE"
+		command -v update-extlinux >/dev/null 2>&1 && update-extlinux >/dev/null 2>&1
+		return 0
+	fi
+	if [ -f "$GRUBCFG" ]; then
+		if grep -E '^GRUB_CMDLINE_LINUX_DEFAULT=' "$GRUBCFG" | grep -qw quiet; then
+			return 0
+		fi
+		sed -i 's/^\(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*\)"/\1 quiet"/' "$GRUBCFG" || return 1
+		echo "quiet_added=grub" >> "$STATE"
+		command -v grub-mkconfig >/dev/null 2>&1 && grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1
+		return 0
+	fi
+	return 0
+}
+
+remove_quiet() {
+	case "$(sed -n 's/^quiet_added=//p' "$STATE" 2>/dev/null)" in
+		extlinux)
+			sed -i 's/^\(default_kernel_opts="[^"]*\) quiet"/\1"/' "$EXTLINUX"
+			command -v update-extlinux >/dev/null 2>&1 && update-extlinux >/dev/null 2>&1 ;;
+		grub)
+			sed -i 's/^\(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*\) quiet"/\1"/' "$GRUBCFG"
+			command -v grub-mkconfig >/dev/null 2>&1 && grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 ;;
+	esac
+}
+
+cmd_enable() {
+	need_root enable
+	[ -d "$THEME_DIR/ittyos" ] || die "the ittyOS theme is missing: run 'sudo ittyos-update'"
+	command -v plymouthd >/dev/null 2>&1 || {
+		info "installing Plymouth"
+		apk add plymouth plymouth-themes || die "could not install plymouth (network?)"
+	}
+	command -v plymouthd >/dev/null 2>&1 || die "plymouthd not found after installation"
+
+	theme=ittyos
+	if ! has_script_plugin; then
+		warn "the Plymouth 'script' plugin was not found: using a stock theme instead of the ittyOS one"
+		if [ -d "$THEME_DIR/spinner" ]; then theme=spinner; else theme=text; fi
+	fi
+	mkdir -p "$(dirname "$PLY_CONF")" "$(dirname "$STATE")"
+	printf '[Daemon]\nTheme=%s\nShowDelay=0\nDeviceTimeout=5\n' "$theme" > "$PLY_CONF"
+
+	: > "$STATE"
+	echo "theme=$theme" >> "$STATE"
+	rm -f /etc/ittyos/no-splash
+	rc-update add ittyos-splash sysinit >/dev/null 2>&1 || warn "could not enable the ittyos-splash service"
+	rc-update add ittyos-splash-quit default >/dev/null 2>&1 || warn "could not enable the ittyos-splash-quit service"
+	add_quiet || warn "could not edit the kernel command line (the splash still works)"
+	info "boot splash enabled (theme: $theme). It appears from the next boot."
+	info "to skip it once without removing anything: create the file /etc/ittyos/no-splash"
+}
+
+cmd_disable() {
+	need_root disable
+	rc-update del ittyos-splash sysinit >/dev/null 2>&1
+	rc-update del ittyos-splash-quit default >/dev/null 2>&1
+	remove_quiet
+	rm -f "$STATE"
+	info "boot splash disabled (the packages stay installed; remove with: apk del plymouth plymouth-themes)"
+}
+
+cmd_status() {
+	printf 'Boot splash (Plymouth)\n'
+	if command -v plymouthd >/dev/null 2>&1; then
+		printf '  plymouth  : installed\n'
+	else
+		printf '  plymouth  : not installed (ittyos-splash enable)\n'
+	fi
+	if [ -r "$STATE" ]; then
+		printf '  theme     : %s\n' "$(sed -n 's/^theme=//p' "$STATE")"
+	fi
+	if rc-update show 2>/dev/null | grep -q 'ittyos-splash '; then
+		printf '  service   : enabled\n'
+	else
+		printf '  service   : not enabled\n'
+	fi
+	[ -e /etc/ittyos/no-splash ] && printf '  skip file : /etc/ittyos/no-splash exists, the splash is skipped\n'
+	return 0
+}
+
+case "${1:-}" in
+	enable) cmd_enable ;;
+	disable) cmd_disable ;;
+	status|"") cmd_status ;;
+	-h|--help) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//' ;;
+	*) die "unknown command: $1 (enable, disable, status)" ;;
+esac

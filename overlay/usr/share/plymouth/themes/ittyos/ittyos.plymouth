@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=ittyOS
+Description=ittyOS boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/ittyos
+ScriptFile=/usr/share/plymouth/themes/ittyos/ittyos.script

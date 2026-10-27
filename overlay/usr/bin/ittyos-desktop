@@ -1,10 +1,18 @@
 #!/bin/sh
 # ittyos-desktop - install the XFCE desktop on a running ittyOS (run as root)
-#   ittyos-desktop       ask first
-#   ittyos-desktop -y    do not ask
+#   ittyos-desktop [name]   ask first (name: xfce, lxqt, mate, plasma, gnome, sway; default xfce)
+#   ittyos-desktop -y       do not ask
 
 YES=0
-[ "${1:-}" = "-y" ] && YES=1
+DE=xfce
+for a in "$@"; do
+	case "$a" in
+		-y) YES=1 ;;
+		xfce|lxqt|mate|plasma|gnome|sway) DE="$a" ;;
+		-h|--help) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		*) echo "unknown option: $a (try -h)"; exit 1 ;;
+	esac
+done
 
 if [ -t 1 ]; then
 	R=$(printf '\033[0m'); CY=$(printf '\033[36m'); RD=$(printf '\033[31m'); YL=$(printf '\033[33m')
@@ -23,16 +31,24 @@ mem=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)
 [ "${mem:-0}" -lt 1500 ] && warn "less than 1.5 GB of RAM: the desktop will be slow"
 
 if [ "$YES" = 0 ]; then
-	printf 'Install XFCE (several hundred MB), notifications and a window tool? [y/N] '
+	printf 'Install the %s desktop (hundreds of MB) and its helper tools? [y/N] ' "$DE"
 	read -r ans
 	case "$ans" in y|Y|yes|YES) ;; *) echo "cancelled"; exit 1 ;; esac
 fi
 
-info "installing XFCE"
-setup-desktop xfce || die "setup-desktop failed"
+info "installing the $DE desktop"
+setup-desktop "$DE" || die "setup-desktop failed"
 
-info "installing notifications and the update-window tool"
-apk add xfce4-notifyd zenity || warn "could not install xfce4-notifyd/zenity: update notices may not be shown"
+case "$DE" in
+	xfce) extras="xfce4-notifyd zenity" ;;
+	sway) extras= ;;
+	*) extras="zenity" ;;
+esac
+if [ -n "$extras" ]; then
+	info "installing helper tools: $extras"
+	# shellcheck disable=SC2086
+	apk add $extras || warn "could not install $extras: update notices may not be shown"
+fi
 
 # inside VirtualBox: mouse integration, screen resize, clipboard (best effort)
 if grep -qi virtualbox /sys/class/dmi/id/product_name 2>/dev/null; then

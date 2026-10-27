@@ -1,0 +1,83 @@
+#!/bin/sh
+# ittyos-firstboot - finishes the installation on the first boot of the installed system:
+# installs the desktop chosen in install-ittyos and turns on the boot splash.
+# Started by /etc/local.d/10-ittyos-firstboot.start, removes itself when everything is done.
+# Settings are read from /etc/ittyos/firstboot.conf (DESKTOP, SPLASH, TRIES).
+
+CONF="${ITTYOS_FIRSTBOOT_CONF:-/etc/ittyos/firstboot.conf}"
+LOG="${ITTYOS_FIRSTBOOT_LOG:-/var/log/ittyos-firstboot.log}"
+HOOK="${ITTYOS_FIRSTBOOT_HOOK:-/etc/local.d/10-ittyos-firstboot.start}"
+MAXTRIES=3
+
+[ -r "$CONF" ] || exit 0
+DESKTOP=; SPLASH=0; TRIES=0
+# shellcheck disable=SC1090
+. "$CONF"
+
+say() { printf '\nittyOS first boot: %s\n' "$*"; }
+save() { printf 'DESKTOP=%s\nSPLASH=%s\nTRIES=%s\n' "$DESKTOP" "$SPLASH" "$TRIES" > "$CONF"; }
+finish() { rm -f "$CONF" "$HOOK"; }
+
+[ "$DESKTOP" = none ] && DESKTOP=
+if [ -z "$DESKTOP" ] && [ "$SPLASH" != 1 ]; then
+	finish
+	exit 0
+fi
+
+TRIES=$((TRIES + 1))
+if [ "$TRIES" -gt "$MAXTRIES" ]; then
+	say "giving up after $MAXTRIES attempts. See $LOG. Run 'sudo ittyos-desktop' / 'sudo ittyos-splash enable' by hand."
+	finish
+	exit 0
+fi
+save
+
+say "finishing the installation (attempt $TRIES of $MAXTRIES). This needs the network and takes a few minutes."
+
+i=0
+until ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; do
+	i=$((i + 1))
+	if [ "$i" -ge 30 ]; then
+		say "no network, will try again at the next boot."
+		exit 0
+	fi
+	sleep 2
+done
+
+echo "=== $(date) attempt $TRIES ===" >> "$LOG"
+
+if [ -n "$DESKTOP" ]; then
+	say "installing the $DESKTOP desktop (details: $LOG)"
+	if setup-desktop "$DESKTOP" </dev/null >>"$LOG" 2>&1; then
+		extras=
+		case "$DESKTOP" in
+			xfce) extras="xfce4-notifyd zenity" ;;
+			sway) extras= ;;
+			*) extras="zenity" ;;
+		esac
+		# shellcheck disable=SC2086
+		[ -z "$extras" ] || apk add $extras >>"$LOG" 2>&1 || echo "extras not installed: $extras" >> "$LOG"
+		DESKTOP=
+		save
+	else
+		say "the desktop could not be installed, will try again at the next boot."
+	fi
+fi
+
+if [ "$SPLASH" = 1 ]; then
+	say "turning on the boot splash"
+	if ittyos-splash enable >>"$LOG" 2>&1; then
+		SPLASH=0
+		save
+	else
+		say "the boot splash could not be enabled, will try again at the next boot."
+	fi
+fi
+
+if [ -z "$DESKTOP" ] && [ "$SPLASH" != 1 ]; then
+	finish
+	say "done. Restarting in 5 seconds..."
+	sleep 5
+	reboot
+fi
+exit 0
