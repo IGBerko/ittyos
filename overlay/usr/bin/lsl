@@ -166,6 +166,16 @@ find_rootfs() {
 			return 0
 		fi
 	done
+	# Ubuntu / Mint style layered casper: the base layer has the fewest dots in its name
+	# (minimal.squashfs, ubuntu-server-minimal.squashfs); installer layers are not a system
+	if [ -d "$d/casper" ]; then
+		f=$(for c in "$d"/casper/*.squashfs; do
+			[ -f "$c" ] || continue
+			case "${c##*/}" in *installer*|*secureboot*) continue ;; esac
+			printf '%s %s %s\n' "$(echo "${c##*/}" | tr -cd . | wc -c)" "$(wc -c < "$c")" "$c"
+		done | sort -k1,1n -k2,2nr | head -n1 | cut -d' ' -f3-)
+		[ -n "$f" ] && { echo "squash $f"; return 0; }
+	fi
 	# an archive that is a root file system
 	f=$(largest "$d" 20 'rootfs*.tar*' '*rootfs*.tgz' 'stage3*.tar*' '*.tar.xz' '*.tar.gz' '*.tar.zst')
 	[ -n "$f" ] && { echo "tar $f"; return 0; }
