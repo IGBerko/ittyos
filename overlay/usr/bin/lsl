@@ -1,0 +1,521 @@
+#!/bin/sh
+# lsl - Linux Subsystem for Linux: run other distributions in a chroot (like WSL, but on Linux)
+#
+#   lsl list                 installed distributions and what the repository offers
+#   lsl pull NAME [AS]       download NAME from github.com/IGBerko/lsl and set it up
+#   lsl import NAME FILE|URL set up a distribution from your own ISO / rootfs archive / initramfs
+#   lsl run NAME [cmd...]    enter the distribution (or run one command in it)
+#   lsl default NAME         the distribution that a plain "lsl" opens
+#   lsl info NAME            where it lives and how large it is
+#   lsl remove NAME          delete it
+#
+# How a download is set up:
+#   1. the ISO is mounted and searched for a root file system (squashfs / rootfs image / tar);
+#      Fedora style "squashfs -> rootfs.img" layers are followed;
+#   2. if there is none, the initramfs (initrd, core.gz ...) is unpacked instead;
+#   3. the result is copied to /var/lib/lsl/distros/NAME/rootfs, the ISO is deleted.
+# "lsl run" bind-mounts /dev /proc /sys and does a chroot. It is a chroot, not a container or
+# a virtual machine: there is no init system, processes and network are shared with ittyOS.
+#
+# Variables: LSL_REPO (IGBerko/lsl), LSL_BRANCH (main), LSL_HOME (/var/lib/lsl), LSL_SHELL
+
+LSL_REPO="${LSL_REPO:-IGBerko/lsl}"
+LSL_BRANCH="${LSL_BRANCH:-main}"
+LSL_HOME="${LSL_HOME:-/var/lib/lsl}"
+LSL_RAW="${LSL_RAW:-https://raw.githubusercontent.com/$LSL_REPO/$LSL_BRANCH}"
+LSL_MEDIA="${LSL_MEDIA:-https://media.githubusercontent.com/media/$LSL_REPO/$LSL_BRANCH}"
+LSL_API="${LSL_API:-https://api.github.com/repos/$LSL_REPO/contents}"
+DISTROS="$LSL_HOME/distros"
+CACHE="$LSL_HOME/cache"
+
+if [ -t 1 ]; then
+	R=$(printf '\033[0m'); B=$(printf '\033[1m'); CY=$(printf '\033[36m'); RD=$(printf '\033[31m'); YL=$(printf '\033[33m'); GR=$(printf '\033[32m')
+else
+	R=; B=; CY=; RD=; YL=; GR=
+fi
+info() { printf '%s==>%s %s\n' "$CY" "$R" "$*"; }
+warn() { printf '%s !!%s %s\n' "$YL" "$R" "$*" >&2; }
+die()  { printf '%serror:%s %s\n' "$RD" "$R" "$*" >&2; exit 1; }
+
+need_root() { [ -n "${LSL_TEST:-}" ] || [ "$(id -u)" = 0 ] || die "root privileges required: sudo lsl $1"; }
+
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+
+valid_name() {
+	case "$1" in ""|*[!A-Za-z0-9._-]*|.*) return 1 ;; esac
+	return 0
+}
+
+ensure_tool() { # tool package
+	command -v "$1" >/dev/null 2>&1 && return 0
+	command -v apk >/dev/null 2>&1 || die "$1 is missing"
+	info "installing $2"
+	apk add "$2" >/dev/null 2>&1 || die "could not install $2 (network?)"
+	command -v "$1" >/dev/null 2>&1 || die "$1 is still missing after installing $2"
+}
+
+fetch() { # url output
+	if command -v curl >/dev/null 2>&1 || [ -n "${LSL_CURL:-}" ]; then
+		if [ -n "${LSL_QUIET:-}" ]; then ${LSL_CURL:-curl} -fsSL --retry 3 -C - -o "$2" "$1"; else ${LSL_CURL:-curl} -fL --retry 3 -C - -# -o "$2" "$1"; fi
+	else
+		ensure_tool curl curl
+		curl -fL --retry 3 -C - -# -o "$2" "$1"
+	fi
+}
+
+fetch_text() { # url -> stdout
+	${LSL_CURL:-curl} -fsSL --retry 2 "$1" 2>/dev/null
+}
+
+# ---------- remote index ----------
+# Result lines: NAME<TAB>PATH<TAB>SIZE<TAB>SHA256
+# Preferred: index.txt in the repository root, lines "name path [sha256] [description]".
+# Otherwise the repository is listed through the GitHub API (folders = distributions).
+
+api_list() { # path-or-empty -> "name path size type" lines
+	fetch_text "$LSL_API${1:+/$1}?ref=$LSL_BRANCH" | awk '
+		/"name":/ { gsub(/.*"name": *"|",?$/, ""); n=$0 }
+		/"path":/ { gsub(/.*"path": *"|",?$/, ""); p=$0 }
+		/"size":/ { gsub(/[^0-9]/, ""); s=$0 }
+		/"type":/ { gsub(/.*"type": *"|",?$/, ""); print n "\t" p "\t" s "\t" $0 }'
+}
+
+is_image() {
+	case "$1" in
+		*.iso|*.ISO|*.tar|*.tar.gz|*.tgz|*.tar.xz|*.txz|*.tar.zst|*.tar.bz2|*.squashfs|*.sfs|*.img|*.gz|*.xz|*.cpio) return 0 ;;
+	esac
+	return 1
+}
+
+stem() {
+	b=${1##*/}
+	for e in .iso .ISO .tar.gz .tgz .tar.xz .txz .tar.zst .tar.bz2 .tar .squashfs .sfs .img .cpio.gz .cpio .gz .xz; do
+		case "$b" in *"$e") b=${b%"$e"}; break ;; esac
+	done
+	echo "$b"
+}
+
+remote_index() {
+	idx=$(fetch_text "$LSL_RAW/index.txt")
+	if [ -n "$idx" ]; then
+		printf '%s\n' "$idx" | awk '!/^#/ && NF >= 2 { printf "%s\t%s\t-\t%s\n", $1, $2, ($3 ~ /^[0-9a-fA-F]{64}$/ ? $3 : "-") }'
+		return 0
+	fi
+	api_list "" | while IFS='	' read -r n p s t; do
+		[ -n "$n" ] || continue
+		case "$t" in
+			file) is_image "$n" && printf '%s\t%s\t%s\t-\n' "$(stem "$n")" "$p" "$s" ;;
+			dir)
+				api_list "$p" | while IFS='	' read -r n2 p2 s2 t2; do
+					[ "$t2" = file ] && is_image "$n2" && printf '%s\t%s\t%s\t-\n' "$n" "$p2" "$s2"
+				done ;;
+		esac
+	done
+}
+
+# ---------- cleanup of temporary mounts ----------
+
+WORK=
+MOUNTS=
+
+reverse() { tac 2>/dev/null || sed '1!G;h;$!d'; }
+
+cleanup() {
+	if [ -n "$MOUNTS" ] && [ -f "$MOUNTS" ]; then
+		reverse < "$MOUNTS" | while read -r m; do
+			umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null
+		done
+	fi
+	[ -n "$WORK" ] && rm -rf "$WORK"
+}
+
+# ---------- looking inside images ----------
+
+magic() { od -An -tx1 -N6 "$1" 2>/dev/null | tr -d ' \n'; }
+
+looks_like_root() {
+	[ -d "$1/etc" ] && { [ -d "$1/usr" ] || [ -d "$1/bin" ] || [ -L "$1/bin" ]; }
+}
+
+# a file larger than N MiB in the tree, by name pattern; prints the largest
+largest() { # dir minMiB pattern...
+	d=$1; min=$2; shift 2
+	for pat in "$@"; do
+		find "$d" -type f -iname "$pat" -size +"$((min * 1024))"k 2>/dev/null
+	done | while read -r f; do
+		printf '%s %s\n' "$(wc -c < "$f")" "$f"
+	done | sort -rn | head -n1 | cut -d' ' -f2-
+}
+
+# Which file inside a mounted tree holds the root file system? Prints "KIND PATH" or nothing.
+find_rootfs() {
+	d=$1
+	for f in LiveOS/rootfs.img LiveOS/squashfs.img casper/filesystem.squashfs live/filesystem.squashfs \
+		arch/x86_64/airootfs.sfs arch/x86_64/airootfs.erofs manjaro/x86_64/rootfs.sfs image.squashfs \
+		rootfs.squashfs rootfs.img; do
+		if [ -f "$d/$f" ]; then
+			case "$f" in LiveOS/squashfs.img) echo "squash $d/$f" ;; *.img) echo "img $d/$f" ;; *) echo "squash $d/$f" ;; esac
+			return 0
+		fi
+	done
+	# an archive that is a root file system
+	f=$(largest "$d" 20 'rootfs*.tar*' '*rootfs*.tgz' 'stage3*.tar*' '*.tar.xz' '*.tar.gz' '*.tar.zst')
+	[ -n "$f" ] && { echo "tar $f"; return 0; }
+	f=$(largest "$d" 50 '*.squashfs' '*.sfs' '*.sqfs')
+	[ -n "$f" ] && { echo "squash $f"; return 0; }
+	f=$(largest "$d" 50 '*.img')
+	[ -n "$f" ] && { echo "img $f"; return 0; }
+	return 1
+}
+
+# the initramfs of a mounted tree: Tiny Core core.gz, Debian initrd.gz, dracut initramfs ...
+find_initramfs() {
+	d=$1
+	f=$(largest "$d" 0 'core*.gz' 'initrd*' 'initramfs*' '*.cpio' '*.cpio.*' 'rootfs*.gz' 'corepure64*')
+	[ -n "$f" ] && echo "$f"
+}
+
+mount_loop() { # file fstype dir
+	mkdir -p "$3"
+	modprobe loop >/dev/null 2>&1
+	if mount -t "$2" -o loop,ro "$1" "$3" 2>>"$WORK/mount.log"; then
+		echo "$3" >> "$MOUNTS"
+		return 0
+	fi
+	if mount -o loop,ro "$1" "$3" 2>>"$WORK/mount.log"; then
+		echo "$3" >> "$MOUNTS"
+		return 0
+	fi
+	return 1
+}
+
+# Follows layers (ISO -> squashfs -> rootfs.img) until a tree that looks like a root file system.
+# Sets ROOT_SRC to that directory, or ROOT_TAR to an archive.
+ROOT_SRC=
+ROOT_TAR=
+resolve_root() {
+	cur=$1; depth=0
+	while [ $depth -lt 5 ]; do
+		if looks_like_root "$cur"; then ROOT_SRC=$cur; return 0; fi
+		found=$(find_rootfs "$cur") || return 1
+		kind=${found%% *}; path=${found#* }
+		depth=$((depth + 1))
+		case "$kind" in
+			tar) ROOT_TAR=$path; return 0 ;;
+			squash)
+				case "$path" in *.erofs) fs=erofs ;; *) fs=squashfs ;; esac
+				modprobe "$fs" >/dev/null 2>&1
+				mount_loop "$path" "$fs" "$WORK/m$depth" || { warn "could not mount ${path##*/} (kernel support for $fs?)"; return 1; } ;;
+			img)
+				modprobe ext4 >/dev/null 2>&1
+				mount_loop "$path" ext4 "$WORK/m$depth" || return 1 ;;
+		esac
+		cur="$WORK/m$depth"
+	done
+	return 1
+}
+
+unpack_tar() { # archive dest
+	case "$1" in
+		*.zst|*.zstd) ensure_tool zstd zstd; zstd -dc "$1" | tar -xp -C "$2" ;;
+		*.xz|*.txz) xz -dc "$1" | tar -xp -C "$2" ;;
+		*.bz2) bzip2 -dc "$1" | tar -xp -C "$2" ;;
+		*.gz|*.tgz) gzip -dc "$1" | tar -xp -C "$2" ;;
+		*) tar -xp -f "$1" -C "$2" ;;
+	esac
+}
+
+unpack_initramfs() { # file dest
+	m=$(magic "$1")
+	case "$m" in
+		1f8b*) dec="gzip -dc" ;;
+		fd377a58*) dec="xz -dc" ;;
+		28b52ffd*) ensure_tool zstd zstd; dec="zstd -dc" ;;
+		425a68*) dec="bzip2 -dc" ;;
+		04224d18*) ensure_tool lz4 lz4; dec="lz4 -dc" ;;
+		3037303730*) dec=cat ;;
+		*) return 1 ;;
+	esac
+	( cd "$2" && $dec "$1" | cpio -idm --no-absolute-filenames >/dev/null 2>&1 )
+	looks_like_root "$2" || [ -x "$2/bin/busybox" ] || [ -x "$2/init" ]
+}
+
+free_kib() { df -k "$1" 2>/dev/null | awk 'NR > 1 { v = $4 } END { print v + 0 }'; }
+used_kib() { du -sk "$1" 2>/dev/null | cut -f1; }
+
+# ---------- install ----------
+
+install_image() { # name file
+	name=$1; img=$2
+	dest="$DISTROS/$name"
+	[ -e "$dest" ] && die "$name is already set up (lsl remove $name first)"
+	mkdir -p "$DISTROS" "$LSL_HOME"
+	WORK=$(mktemp -d "$LSL_HOME/work.XXXXXX") || die "cannot create a working directory in $LSL_HOME"
+	MOUNTS="$WORK/mounts"; : > "$MOUNTS"
+	trap 'cleanup; exit 1' INT TERM
+	mkdir -p "$WORK/iso" "$WORK/new"
+
+	how=
+	if file_is_iso "$img"; then
+		modprobe isofs >/dev/null 2>&1
+		mount_loop "$img" iso9660 "$WORK/iso" || { cleanup; die "could not mount the ISO (kernel support: modprobe isofs loop)"; }
+		top="$WORK/iso"
+	else
+		# a plain squashfs/tar/initramfs given directly
+		top=
+	fi
+
+	if [ -n "$top" ]; then
+		info "searching the ISO for a root file system"
+		if resolve_root "$top"; then
+			if [ -n "$ROOT_TAR" ]; then
+				info "unpacking ${ROOT_TAR##*/}"
+				unpack_tar "$ROOT_TAR" "$WORK/new" || { cleanup; die "could not unpack the archive"; }
+				how="rootfs archive"
+			else
+				need=$(used_kib "$ROOT_SRC"); free=$(free_kib "$LSL_HOME")
+				if [ "$free" -lt $((need + need / 10)) ]; then
+					cleanup; die "not enough space: need about $((need / 1024)) MiB, free $((free / 1024)) MiB in $LSL_HOME"
+				fi
+				info "copying the root file system ($((need / 1024)) MiB)"
+				cp -a "$ROOT_SRC/." "$WORK/new/" || { cleanup; die "copy failed"; }
+				how="root file system"
+			fi
+		else
+			info "no root file system found: trying the initramfs"
+			ini=$(find_initramfs "$top")
+			[ -n "$ini" ] || { cleanup; die "neither a root file system nor an initramfs was found in the image"; }
+			info "unpacking ${ini##*/}"
+			unpack_initramfs "$ini" "$WORK/new" || { cleanup; die "could not unpack the initramfs (unknown format or not a usable system)"; }
+			how="initramfs"
+		fi
+	else
+		case "$img" in
+			*.tar|*.tar.*|*.tgz|*.txz) unpack_tar "$img" "$WORK/new" || { cleanup; die "could not unpack the archive"; }; how="rootfs archive" ;;
+			*.squashfs|*.sfs|*.sqfs)
+				ROOT_SRC=
+				modprobe squashfs >/dev/null 2>&1
+				mount_loop "$img" squashfs "$WORK/m0" || { cleanup; die "could not mount the squashfs"; }
+				resolve_root "$WORK/m0" || { cleanup; die "no root file system inside"; }
+				cp -a "$ROOT_SRC/." "$WORK/new/"; how="root file system" ;;
+			*) unpack_initramfs "$img" "$WORK/new" || { cleanup; die "unknown image format: $img"; }; how="initramfs" ;;
+		esac
+	fi
+
+	# the unpacked tree must be usable
+	if ! { [ -x "$WORK/new/bin/sh" ] || [ -L "$WORK/new/bin/sh" ] || [ -x "$WORK/new/usr/bin/sh" ] || [ -x "$WORK/new/bin/busybox" ]; }; then
+		cleanup; die "the result has no shell (/bin/sh): it cannot be entered"
+	fi
+	mkdir -p "$WORK/new/proc" "$WORK/new/sys" "$WORK/new/dev" "$WORK/new/run" "$WORK/new/tmp" "$WORK/new/root"
+	cleanup_mounts_only
+	mv "$WORK/new" "$dest.tmp" && mkdir -p "$dest" && mv "$dest.tmp" "$dest/rootfs" || { cleanup; die "could not store the system"; }
+	printf 'source=%s\nhow=%s\ndate=%s\n' "${img##*/}" "$how" "$(date +%Y-%m-%d)" > "$dest/meta"
+	rm -rf "$WORK"; WORK=
+	trap - INT TERM
+	info "ready: $name ($how). Enter it with: sudo lsl run $name"
+}
+
+cleanup_mounts_only() {
+	if [ -f "$MOUNTS" ]; then
+		reverse < "$MOUNTS" | while read -r m; do
+			umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null
+		done
+		: > "$MOUNTS"
+	fi
+}
+
+file_is_iso() { # ISO 9660: "CD001" at offset 32769
+	[ "$(dd if="$1" bs=1 skip=32769 count=5 2>/dev/null)" = "CD001" ]
+}
+
+# ---------- commands ----------
+
+cmd_list() {
+	printf '\n%sInstalled%s\n' "$B" "$R"
+	n=0
+	def=$(cat "$LSL_HOME/default" 2>/dev/null)
+	for d in "$DISTROS"/*/; do
+		[ -d "${d}rootfs" ] || continue
+		nm=$(basename "$d")
+		mark=" "; [ "$nm" = "$def" ] && mark="*"
+		printf ' %s %-18s %s\n' "$mark" "$nm" "$(sed -n 's/^how=//p' "${d}meta" 2>/dev/null)"
+		n=$((n + 1))
+	done
+	[ $n -eq 0 ] && echo "  nothing yet"
+	printf '\n%sIn the repository%s (github.com/%s)\n' "$B" "$R" "$LSL_REPO"
+	idx=$(remote_index)
+	if [ -z "$idx" ]; then
+		echo "  could not read the repository (network? is it published?)"
+	else
+		printf '%s\n' "$idx" | while IFS='	' read -r nm p s h; do
+			sz=; [ "$s" != "-" ] && [ -n "$s" ] && sz="$((s / 1048576)) MiB"
+			printf '   %-18s %s\n' "$nm" "$sz"
+		done
+	fi
+	echo; echo "  sudo lsl pull NAME     download and set up"
+	echo
+}
+
+cmd_pull() {
+	need_root pull
+	name=$1; als=${2:-}
+	[ -n "$name" ] || die "usage: lsl pull NAME [AS]"
+	case "$name" in
+		http://*|https://*) cmd_import "${als:-$(stem "$name")}" "$name"; return ;;
+	esac
+	idx=$(remote_index)
+	[ -n "$idx" ] || die "cannot read the repository github.com/$LSL_REPO (network? not published yet?)"
+	line=$(printf '%s\n' "$idx" | awk -F'\t' -v n="$name" '$1 == n || $2 == n { print; exit }')
+	if [ -z "$line" ]; then
+		echo "no \"$name\" in the repository. Available:" >&2
+		printf '%s\n' "$idx" | cut -f1 | sort -u | sed 's/^/  /' >&2
+		exit 1
+	fi
+	p=$(printf '%s\n' "$line" | cut -f2); sha=$(printf '%s\n' "$line" | cut -f4)
+	local_name=${als:-$(printf '%s\n' "$line" | cut -f1)}
+	valid_name "$local_name" || die "bad name: $local_name"
+	[ -e "$DISTROS/$local_name" ] && die "$local_name is already set up (lsl remove $local_name)"
+	mkdir -p "$CACHE"
+	out="$CACHE/${p##*/}"
+	info "downloading $p"
+	fetch "$LSL_RAW/$p" "$out" || { rm -f "$out"; die "download failed"; }
+	# Git LFS pointer instead of the real file: take it from the media server
+	if [ "$(wc -c < "$out")" -lt 1024 ] && head -c 40 "$out" | grep -q 'git-lfs'; then
+		info "file is stored in Git LFS: downloading the real content"
+		rm -f "$out"
+		fetch "$LSL_MEDIA/$p" "$out" || { rm -f "$out"; die "download failed (LFS)"; }
+	fi
+	if [ "$sha" != "-" ] && command -v sha256sum >/dev/null 2>&1; then
+		got=$(sha256sum "$out" | cut -d' ' -f1)
+		[ "$got" = "$sha" ] || { rm -f "$out"; die "checksum mismatch: the download is damaged or changed"; }
+		info "checksum ok"
+	fi
+	install_image "$local_name" "$out"
+	[ -z "${LSL_KEEP:-}" ] && rm -f "$out"
+	[ -f "$LSL_HOME/default" ] || echo "$local_name" > "$LSL_HOME/default"
+}
+
+cmd_import() {
+	need_root import
+	name=$1; src=$2
+	[ -n "$name" ] && [ -n "$src" ] || die "usage: lsl import NAME FILE|URL"
+	valid_name "$name" || die "bad name: $name (letters, digits, . _ -)"
+	case "$src" in
+		http://*|https://*)
+			mkdir -p "$CACHE"; out="$CACHE/${src##*/}"
+			info "downloading $src"
+			fetch "$src" "$out" || { rm -f "$out"; die "download failed"; }
+			src=$out; tmpsrc=1 ;;
+		*) [ -f "$src" ] || die "no such file: $src"; tmpsrc= ;;
+	esac
+	install_image "$name" "$src"
+	[ -n "$tmpsrc" ] && [ -z "${LSL_KEEP:-}" ] && rm -f "$src"
+	[ -f "$LSL_HOME/default" ] || echo "$name" > "$LSL_HOME/default"
+}
+
+pick_shell() { # rootdir
+	[ -n "${LSL_SHELL:-}" ] && { echo "$LSL_SHELL"; return; }
+	for s in /bin/bash /usr/bin/bash /bin/zsh /usr/bin/zsh /bin/ash /bin/sh /usr/bin/sh; do
+		[ -x "$1$s" ] || [ -L "$1$s" ] && { echo "$s"; return; }
+	done
+	[ -x "$1/bin/busybox" ] && echo "/bin/busybox sh"
+}
+
+SESSION=
+end_session() {
+	[ -n "$SESSION" ] || return 0
+	rm -f "$SESSION/$$"
+	# last one out unmounts
+	for f in "$SESSION"/*; do
+		[ -e "$f" ] || continue
+		kill -0 "$(basename "$f")" 2>/dev/null && return 0
+		rm -f "$f"
+	done
+	for m in dev proc sys run; do
+		umount -l "$ROOTFS/$m" 2>/dev/null
+	done
+}
+
+cmd_run() {
+	need_root run
+	name=$1; [ $# -gt 0 ] && shift
+	[ -n "$name" ] || name=$(cat "$LSL_HOME/default" 2>/dev/null)
+	[ -n "$name" ] || die "usage: lsl run NAME [command]  (nothing is set up yet: lsl list)"
+	ROOTFS="$DISTROS/$name/rootfs"
+	[ -d "$ROOTFS" ] || die "$name is not set up (lsl list)"
+	SESSION="$LSL_HOME/run/$name"; mkdir -p "$SESSION"
+	echo $$ > "$SESSION/$$"
+	trap 'end_session' EXIT
+	trap 'exit 130' INT TERM
+
+	mountpoint -q "$ROOTFS/proc" 2>/dev/null || mount -t proc proc "$ROOTFS/proc"
+	mountpoint -q "$ROOTFS/sys" 2>/dev/null || mount -o rbind /sys "$ROOTFS/sys"
+	mountpoint -q "$ROOTFS/dev" 2>/dev/null || mount -o rbind /dev "$ROOTFS/dev"
+	mountpoint -q "$ROOTFS/run" 2>/dev/null || mount -t tmpfs tmpfs "$ROOTFS/run"
+	# DNS and host name
+	[ -L "$ROOTFS/etc/resolv.conf" ] && rm -f "$ROOTFS/etc/resolv.conf"
+	[ -f /etc/resolv.conf ] && cp /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
+
+	sh_cmd=$(pick_shell "$ROOTFS")
+	[ -n "$sh_cmd" ] || die "no shell found in $name"
+	CHROOT=$(command -v chroot) || die "chroot is missing"
+	PATHV=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+	if [ $# -gt 0 ]; then
+		# shellcheck disable=SC2086
+		env -i HOME=/root TERM="${TERM:-linux}" LANG=C.UTF-8 PATH=$PATHV "$CHROOT" "$ROOTFS" $sh_cmd -c "$*"
+	else
+		info "entering $name (type exit to come back to ittyOS)"
+		# shellcheck disable=SC2086
+		env -i HOME=/root TERM="${TERM:-linux}" LANG=C.UTF-8 PATH=$PATHV PS1="($name) \\u@\\h:\\w\\\$ " "$CHROOT" "$ROOTFS" $sh_cmd -l
+	fi
+	rc=$?
+	end_session; SESSION=
+	trap - EXIT
+	exit $rc
+}
+
+cmd_info() {
+	d="$DISTROS/${1:-}"
+	[ -d "$d/rootfs" ] || die "usage: lsl info NAME (installed ones: lsl list)"
+	printf 'name   : %s\npath   : %s\nsize   : %s\n' "$1" "$d/rootfs" "$(du -sh "$d/rootfs" 2>/dev/null | cut -f1)"
+	cat "$d/meta" 2>/dev/null | sed 's/^/        /'
+	[ -r "$d/rootfs/etc/os-release" ] && sed -n 's/^PRETTY_NAME="\{0,1\}\([^"]*\)"\{0,1\}$/os     : \1/p' "$d/rootfs/etc/os-release"
+}
+
+cmd_remove() {
+	need_root remove
+	d="$DISTROS/${1:-}"
+	[ -n "${1:-}" ] && [ -d "$d" ] || die "usage: lsl remove NAME"
+	valid_name "$1" || die "bad name"
+	for m in dev proc sys run; do
+		if mountpoint -q "$d/rootfs/$m" 2>/dev/null; then
+			umount -l "$d/rootfs/$m" 2>/dev/null || die "$1 is in use ($m is mounted)"
+		fi
+	done
+	printf 'Delete %s and everything inside it? Type YES: ' "$1"
+	if [ -n "${LSL_YES:-}" ]; then echo YES; ans=YES; else read -r ans || ans=; fi
+	[ "$ans" = YES ] || die "cancelled"
+	rm -rf "$d"
+	[ "$(cat "$LSL_HOME/default" 2>/dev/null)" = "$1" ] && rm -f "$LSL_HOME/default"
+	info "$1 removed"
+}
+
+cmd_default() {
+	need_root default
+	[ -d "$DISTROS/${1:-}/rootfs" ] || die "usage: lsl default NAME"
+	echo "$1" > "$LSL_HOME/default"
+	info "default: $1"
+}
+
+case "${1:-}" in
+	list|ls|-l) cmd_list ;;
+	pull|install) shift; cmd_pull "$@" ;;
+	import) shift; cmd_import "$@" ;;
+	run|enter|-d) shift; cmd_run "$@" ;;
+	info) shift; cmd_info "$@" ;;
+	remove|rm|delete) shift; cmd_remove "$@" ;;
+	default) shift; cmd_default "$@" ;;
+	"") if [ -f "$LSL_HOME/default" ]; then cmd_run; else usage; fi ;;
+	-h|--help|help) usage ;;
+	*) die "unknown command: $1 (lsl --help)" ;;
+esac

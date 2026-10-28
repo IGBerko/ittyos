@@ -73,3 +73,18 @@ Without a notification daemon the tray notice cannot be shown: `flowkit -i xfce4
     list partition
 
 `ittyos-disk -s commands.txt -y` runs the same commands from a file without questions.
+
+## lsl - Linux Subsystem for Linux
+
+    sudo lsl list              # installed systems and what github.com/IGBerko/lsl offers
+    sudo lsl pull debian       # download and set up
+    sudo lsl run debian        # enter it (chroot); lsl run debian 'apt update' runs one command
+    sudo lsl import mylinux file.iso
+
+`lsl` looks inside the ISO for a root file system (squashfs, `rootfs.img`, rootfs tar archives); if it
+finds none it unpacks the initramfs and uses that. It is a chroot: there is no init system and the
+network and processes are shared with ittyOS.
+
+Repository layout (github.com/IGBerko/lsl): either an `index.txt` in the root with lines
+`name path [sha256]`, or one folder per distribution with an image inside. Plain git files are
+limited to 100 MB, so bigger images need Git LFS (supported) or GitHub Releases (use `lsl import NAME URL`).

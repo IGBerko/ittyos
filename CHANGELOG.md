@@ -1,6 +1,15 @@
 # Changelog
 
 ## 1.0.6
+- **`lsl`** - Linux Subsystem for Linux, a WSL-style tool. `sudo lsl pull NAME` downloads an image from
+  github.com/IGBerko/lsl (an `index.txt` list, or the repository folder listing as a fallback;
+  Git LFS files and SHA-256 sums are supported), `sudo lsl import NAME FILE|URL` uses your own
+  ISO / rootfs archive / initramfs. The ISO is searched for a root file system (Debian, Ubuntu,
+  Mint, Arch, Manjaro, Gentoo, Fedora-style `squashfs -> rootfs.img` layers, rootfs tar archives);
+  if there is none, the initramfs is unpacked instead (Tiny Core `core.gz` and similar). The result is
+  stored in `/var/lib/lsl/distros/NAME/rootfs`; `sudo lsl run NAME [command]` mounts /dev /proc /sys and
+  does a `chroot`. Also `lsl list`, `info`, `default`, `remove`. It is a chroot, not a container: no init
+  system, shared processes and network.
 - **`ittyos-disk`**: a disk manager in the style of Windows `diskpart`. `list disk|partition|volume`,
   `select disk N`, `select partition N`, `detail`, `create partition [size=2G] [type=...]`,
   `delete partition`, `format fs=ext4|fat32|exfat|ntfs|xfs|btrfs|swap [label=NAME]`, `clean`,
