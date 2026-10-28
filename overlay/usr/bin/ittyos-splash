@@ -4,7 +4,7 @@
 #   ittyos-splash disable    turn it off again (root)
 #   ittyos-splash status     what is installed and what is missing
 #   ittyos-splash test       show the splash for a few seconds (debug log)
-#   ittyos-splash debug      write a Plymouth debug log on the next boot
+#   ittyos-splash debug      show where the boot logs are and print the last one
 #
 # Plymouth is started from OpenRC, not from the initramfs (Alpine has no initramfs support
 # for it), so the splash appears a moment after the kernel starts. The boot never depends on it.
@@ -144,14 +144,19 @@ cmd_status() {
 		*" quiet "*) printf '  quiet     : yes\n' ;;
 		*) printf '  quiet     : no (kernel messages are visible)\n' ;;
 	esac
+	if [ -r /var/log/ittyos-splash.log ]; then
+		printf '  last boot :\n'
+		sed 's/^/    /' /var/log/ittyos-splash.log | tail -n 8
+	else
+		printf '  last boot : no log yet (reboot after enabling)\n'
+	fi
 	return 0
 }
 
-# debug: next boot writes /var/log/ittyos-plymouth.log
+# debug: the logs are written on every boot now; this only tells where they are
 cmd_debug() {
-	need_root debug
-	mkdir -p /etc/ittyos && : > /etc/ittyos/splash-debug
-	info "debug on: reboot, then send /var/log/ittyos-plymouth.log (and: ittyos-splash status)"
+	info "logs are written on every boot: /var/log/ittyos-splash.log and /var/log/ittyos-plymouth.log"
+	[ -r /var/log/ittyos-splash.log ] && { echo; cat /var/log/ittyos-splash.log; }
 }
 
 # test: try to show the splash for a few seconds on the current screen

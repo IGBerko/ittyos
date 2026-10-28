@@ -1,6 +1,14 @@
 # Changelog
 
 ## 1.0.6
+- **`ittyos-update` works without git**: it checks `VERSION` and the latest commit over HTTPS and downloads
+  the sources as one archive with curl (wget if curl is missing; curl is installed if neither exists).
+  The applied commit is remembered in `/var/lib/ittyos/applied-commit`.
+- **Plymouth start rewritten**: the splash service now loads the graphics drivers of virtual machines
+  (simpledrm, vmwgfx, vboxvideo, virtio_gpu, bochs, cirrus), waits up to 10 s for `/dev/fb0` or
+  `/dev/dri/card0`, waits until the daemon answers before showing the splash, and writes what it did to
+  `/var/log/ittyos-splash.log` and `/var/log/ittyos-plymouth.log` on every boot. `ittyos-splash status`
+  shows the last lines of that log.
 - **`lsl`** - Linux Subsystem for Linux, a WSL-style tool. `sudo lsl pull NAME` downloads an image from
   github.com/IGBerko/lsl (an `index.txt` list, or the repository folder listing as a fallback;
   Git LFS files and SHA-256 sums are supported), `sudo lsl import NAME FILE|URL` uses your own

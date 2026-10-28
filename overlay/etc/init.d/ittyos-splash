@@ -1,31 +1,53 @@
 #!/sbin/openrc-run
 # ittyOS boot splash (Plymouth), started from OpenRC.
 # Never fails the boot: every step is optional and time-limited.
+# What happened is written to /var/log/ittyos-splash.log and /var/log/ittyos-plymouth.log.
 
 description="ittyOS boot splash (Plymouth)"
+SPLASH_LOG=/var/log/ittyos-splash.log
 
 depend() {
 	need sysfs devfs
 	after mdev udev hwdrivers modules
 }
 
+slog() { echo "$(date +%T 2>/dev/null) $*" >> "$SPLASH_LOG"; }
+
 start() {
-	command -v plymouthd >/dev/null 2>&1 || return 0
-	[ -e /etc/ittyos/no-splash ] && return 0
+	: > "$SPLASH_LOG"
+	if ! command -v plymouthd >/dev/null 2>&1; then slog "plymouthd not found"; return 0; fi
+	if [ -e /etc/ittyos/no-splash ]; then slog "skipped: /etc/ittyos/no-splash"; return 0; fi
 	ebegin "Starting the boot splash"
 	mkdir -p /run/plymouth
-	# the graphics driver is loaded asynchronously: wait a little for a display device
+
+	# Graphics drivers of virtual machines are not always loaded this early: ask for them
+	# (a missing module is not an error).
+	for m in simpledrm vmwgfx vboxvideo virtio_gpu bochs cirrus; do
+		timeout 5 modprobe -q "$m" >/dev/null 2>&1
+	done
+	# wait for a display device (up to 10 s)
 	i=0
-	while [ $i -lt 10 ]; do
-		[ -e /dev/fb0 ] || [ -e /dev/dri/card0 ] && break
+	while [ $i -lt 20 ]; do
+		{ [ -e /dev/fb0 ] || [ -e /dev/dri/card0 ]; } && break
 		sleep 0.5 2>/dev/null || sleep 1
 		i=$((i + 1))
 	done
-	dbg=
-	[ -e /etc/ittyos/splash-debug ] && dbg="--debug --debug-file=/var/log/ittyos-plymouth.log"
-	# shellcheck disable=SC2086
-	plymouthd --mode=boot --pid-file=/run/plymouth/pid --attach-to-session $dbg >/dev/null 2>&1
-	timeout 5 plymouth show-splash >/dev/null 2>&1
+	slog "display devices: $(ls /dev/dri/card* /dev/fb* 2>/dev/null | tr '\n' ' ')(waited $i x 0.5s)"
+	slog "kernel command line: $(cat /proc/cmdline 2>/dev/null)"
+
+	plymouthd --mode=boot --pid-file=/run/plymouth/pid --attach-to-session \
+		--debug --debug-file=/var/log/ittyos-plymouth.log >>"$SPLASH_LOG" 2>&1
+	slog "plymouthd exit code $?"
+	# the client may come before the daemon listens: wait for it
+	i=0
+	while [ $i -lt 10 ]; do
+		timeout 2 plymouth --ping >/dev/null 2>&1 && break
+		sleep 0.3 2>/dev/null || sleep 1
+		i=$((i + 1))
+	done
+	slog "ping tries: $i"
+	timeout 5 plymouth show-splash >>"$SPLASH_LOG" 2>&1
+	slog "show-splash exit code $?"
 	eend 0
 }
 

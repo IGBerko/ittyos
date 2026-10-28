@@ -1,5 +1,5 @@
 #!/bin/sh
-# ittyos-update - update a running ittyOS from its GitHub repository (run as root)
+# ittyos-update - update a running ittyOS from its GitHub repository (run as root; needs curl or wget, no git)
 #   ittyos-update        show the new version and ask before applying
 #   ittyos-update -y     do not ask
 #   ittyos-update -f     apply even when the version is the same (repair the system files)
@@ -7,6 +7,11 @@
 REPO_URL="${ITTYOS_REPO:-https://github.com/IGBerko/ittyos}"
 SRC="${ITTYOS_SRC:-/var/lib/ittyos/src}"
 VFILE="${ITTYOS_VERSION_FILE:-/etc/ittyos-version}"
+STATE_DIR="${ITTYOS_STATE_DIR:-/var/lib/ittyos}"
+REPO_PATH="${REPO_URL#https://github.com/}"
+RAW="${ITTYOS_RAW:-https://raw.githubusercontent.com/$REPO_PATH/main}"
+API_SHA="${ITTYOS_API_SHA:-https://api.github.com/repos/$REPO_PATH/commits/main}"
+TARBALL="${ITTYOS_TARBALL:-$REPO_URL/archive/refs/heads/main.tar.gz}"
 YES=0
 FORCE=0
 for a in "$@"; do
@@ -27,34 +32,42 @@ info() { printf '%s==>%s %s\n' "$CY" "$R" "$*"; }
 die()  { printf '%serror:%s %s\n' "$RD" "$R" "$*" >&2; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "root privileges required: sudo ittyos-update"
-command -v git >/dev/null 2>&1 || die "git not found: flowkit -i git"
+# downloads: curl, or wget; no git needed
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+	info "installing curl"
+	apk add curl >/dev/null 2>&1 || die "neither curl nor wget is available (flowkit -i curl)"
+fi
+http_get() { # url [header] -> stdout
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL --retry 2 ${2:+-H "$2"} "$1" 2>/dev/null
+	else
+		wget -qO- ${2:+--header="$2"} "$1" 2>/dev/null
+	fi
+}
+http_save() { # url file
+	if command -v curl >/dev/null 2>&1; then
+		curl -fL --retry 3 -# -o "$2" "$1"
+	else
+		wget -O "$2" "$1"
+	fi
+}
 
 CURRENT=
 [ -r "$VFILE" ] && CURRENT=$(tr -d '[:space:]' <"$VFILE")
 [ -z "$CURRENT" ] && CURRENT=$(sed -n 's/^VERSION_ID=//p' /etc/os-release 2>/dev/null | tr -d '"[:space:]')
 
-FRESH=0
-if [ ! -d "$SRC/.git" ]; then
-	FRESH=1
-	info "first run: downloading ittyOS sources from $REPO_URL"
-	mkdir -p "$(dirname "$SRC")" || die "cannot create $(dirname "$SRC")"
-	git clone --depth 1 "$REPO_URL" "$SRC" || die "download failed (no network, or GitHub is unreachable)"
-else
-	info "checking $REPO_URL"
-	git -C "$SRC" fetch --depth 1 origin main || die "cannot reach GitHub"
-fi
+info "checking $REPO_URL"
+NEW=$(http_get "$RAW/VERSION" | head -n1 | tr -d '[:space:]')
+[ -n "$NEW" ] || die "cannot reach GitHub or the repository has no VERSION file"
+case "$NEW" in *[!0-9A-Za-z._-]*) die "unexpected version string from the server" ;; esac
+NEW_COMMIT=$(http_get "$API_SHA" "Accept: application/vnd.github.sha" | tr -d '[:space:]' | cut -c1-7)
+case "$NEW_COMMIT" in *[!0-9a-f]*) NEW_COMMIT= ;; esac
+OLD_COMMIT=$(cat "$STATE_DIR/applied-commit" 2>/dev/null | tr -d '[:space:]')
 
-NEW_REF=FETCH_HEAD
-[ -f "$SRC/.git/FETCH_HEAD" ] || NEW_REF=HEAD
-NEW=$(git -C "$SRC" show "$NEW_REF:VERSION" 2>/dev/null | tr -d '[:space:]')
-NEW_COMMIT=$(git -C "$SRC" rev-parse --short "$NEW_REF" 2>/dev/null)
-OLD_COMMIT=$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null)
-[ -n "$NEW" ] || die "the repository has no VERSION file"
+printf '  installed : %s\n  available : %s%s\n' "${CURRENT:-unknown}" "$NEW" "${NEW_COMMIT:+ (commit $NEW_COMMIT)}"
 
-printf '  installed : %s\n  available : %s (commit %s)\n' "${CURRENT:-unknown}" "$NEW" "$NEW_COMMIT"
-
-# a first download always offers to apply: the system may come from an older image of the same version
-if [ "$FRESH" = 0 ] && [ "$FORCE" = 0 ] && [ "$NEW" = "$CURRENT" ] && [ "$NEW_COMMIT" = "$OLD_COMMIT" ]; then
+# no record of an earlier update, or another commit on the same version: offer to apply
+if [ "$FORCE" = 0 ] && [ "$NEW" = "$CURRENT" ] && { [ -z "$NEW_COMMIT" ] || [ "$NEW_COMMIT" = "$OLD_COMMIT" ]; }; then
 	info "already up to date"
 	exit 0
 fi
@@ -67,6 +80,14 @@ if [ "$YES" = 0 ]; then
 	case "$ans" in y|Y|yes|YES) ;; *) echo "cancelled"; exit 1 ;; esac
 fi
 
-git -C "$SRC" reset --hard "$NEW_REF" >/dev/null || die "cannot switch to the new version"
+mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
+TMP="$STATE_DIR/main.tar.gz"
+info "downloading the sources"
+http_save "$TARBALL" "$TMP" || { rm -f "$TMP"; die "download failed (no network, or GitHub is unreachable)"; }
+rm -rf "$SRC"; mkdir -p "$SRC"
+tar -xzf "$TMP" -C "$SRC" --strip-components=1 || { rm -f "$TMP"; die "the downloaded archive is damaged"; }
+rm -f "$TMP"
+[ -f "$SRC/build.sh" ] && [ -f "$SRC/VERSION" ] || die "the archive does not look like ittyOS sources"
 sh "$SRC/build.sh" apply || die "applying the update failed"
+[ -n "$NEW_COMMIT" ] && echo "$NEW_COMMIT" > "$STATE_DIR/applied-commit"
 info "ittyOS is now $NEW. Log out and in (or reboot) to see everything."
