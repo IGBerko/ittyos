@@ -35,8 +35,12 @@ start() {
 	slog "display devices: $(ls /dev/dri/card* /dev/fb* 2>/dev/null | tr '\n' ' ')(waited $i x 0.5s)"
 	slog "kernel command line: $(cat /proc/cmdline 2>/dev/null)"
 
-	plymouthd --mode=boot --pid-file=/run/plymouth/pid --attach-to-session \
-		--debug --debug-file=/var/log/ittyos-plymouth.log >>"$SPLASH_LOG" 2>&1
+	# the debug log is large and can show up on the screen: only when asked for
+	# (ittyos-splash debug on)
+	dbg=
+	[ -e /etc/ittyos/splash-debug ] && dbg="--debug --debug-file=/var/log/ittyos-plymouth.log"
+	# shellcheck disable=SC2086
+	plymouthd --mode=boot --pid-file=/run/plymouth/pid --attach-to-session $dbg >>"$SPLASH_LOG" 2>&1
 	slog "plymouthd exit code $?"
 	# the client may come before the daemon listens: wait for it
 	i=0

@@ -1,9 +1,9 @@
 #!/bin/sh
-# ittyos-disk - disk manager in the style of Windows "diskpart"
+# diskcat - disk manager in the style of Windows "diskpart"
 #
-#   ittyos-disk              interactive prompt (root)
-#   ittyos-disk -s FILE      run commands from a file (like "diskpart /s")
-#   ittyos-disk -y           do not ask for confirmation (needed when stdin is not a terminal)
+#   diskcat              interactive prompt (root)
+#   diskcat -s FILE      run commands from a file (like "diskpart /s")
+#   diskcat -y           do not ask for confirmation (needed when stdin is not a terminal)
 #
 # Commands: list disk | list partition | list volume | select disk N | select partition N
 #           detail disk | detail partition | clean | convert gpt|mbr
@@ -38,7 +38,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "${ITTYOS_DISK_TEST:-}" ] && [ "$(id -u)" != 0 ]; then
-	err "root privileges required: sudo ittyos-disk"
+	err "root privileges required: sudo diskcat"
 	exit 1
 fi
 command -v sfdisk >/dev/null 2>&1 || {
@@ -516,7 +516,7 @@ dispatch() {
 
 # ---------- main loop ----------
 
-[ "$INTERACTIVE" = 1 ] && printf '\n%sittyOS disk manager%s  -  type "help" for commands, "list disk" to begin\n\n' "$B" "$R"
+[ "$INTERACTIVE" = 1 ] && printf '\n%sdiskcat - ittyOS disk manager%s  -  type "help" for commands, "list disk" to begin\n\n' "$B" "$R"
 
 if [ -n "$SCRIPT" ]; then
 	[ -r "$SCRIPT" ] || { err "cannot read $SCRIPT"; exit 1; }
@@ -525,7 +525,7 @@ fi
 
 while :; do
 	if [ "$INTERACTIVE" = 1 ]; then
-		p="ittydisk"
+		p="diskcat"
 		[ -n "$SEL_DISK" ] && p="$p [$SEL_DISK${SEL_PART:+:$SEL_PART}]"
 		printf '%s%s>%s ' "$CY" "$p" "$R"
 	fi

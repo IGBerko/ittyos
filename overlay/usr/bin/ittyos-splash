@@ -4,7 +4,8 @@
 #   ittyos-splash disable    turn it off again (root)
 #   ittyos-splash status     what is installed and what is missing
 #   ittyos-splash test       show the splash for a few seconds (debug log)
-#   ittyos-splash debug      show where the boot logs are and print the last one
+#   ittyos-splash debug on|off   detailed Plymouth log on the next boots
+#   ittyos-splash diagnose   the important lines of that log
 #
 # Plymouth is started from OpenRC, not from the initramfs (Alpine has no initramfs support
 # for it), so the splash appears a moment after the kernel starts. The boot never depends on it.
@@ -153,10 +154,23 @@ cmd_status() {
 	return 0
 }
 
-# debug: the logs are written on every boot now; this only tells where they are
+# debug on|off: a detailed Plymouth log on the next boots (/var/log/ittyos-plymouth.log)
 cmd_debug() {
-	info "logs are written on every boot: /var/log/ittyos-splash.log and /var/log/ittyos-plymouth.log"
-	[ -r /var/log/ittyos-splash.log ] && { echo; cat /var/log/ittyos-splash.log; }
+	case "${1:-}" in
+		on) need_root debug; mkdir -p /etc/ittyos && : > /etc/ittyos/splash-debug
+			info "debug on: reboot, then run: ittyos-splash diagnose" ;;
+		off) need_root debug; rm -f /etc/ittyos/splash-debug; info "debug off" ;;
+		*) die "usage: ittyos-splash debug on|off" ;;
+	esac
+}
+
+# diagnose: the important lines of the last Plymouth debug log (theme, plugins, renderers, errors)
+cmd_diagnose() {
+	L=/var/log/ittyos-plymouth.log
+	[ -r "$L" ] || die "no $L: run 'sudo ittyos-splash debug on', reboot, try again"
+	printf 'theme / plugins / renderers / errors in %s:\n' "$L"
+	grep -iE 'theme|module|plugin|renderer|drm|frame-?buffer|failed|error|cannot|can.t|no such|using|script' "$L" \
+		| grep -v 'ply_event_loop\|ply-event-loop' | cut -c1-150 | head -n 40
 }
 
 # test: try to show the splash for a few seconds on the current screen
@@ -176,8 +190,9 @@ case "${1:-}" in
 	enable) cmd_enable ;;
 	disable) cmd_disable ;;
 	status|"") cmd_status ;;
-	debug) cmd_debug ;;
+	debug) shift; cmd_debug "$@" ;;
+	diagnose) cmd_diagnose ;;
 	test) cmd_test ;;
-	-h|--help) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//' ;;
-	*) die "unknown command: $1 (enable, disable, status, test, debug)" ;;
+	-h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;
+	*) die "unknown command: $1 (enable, disable, status, test, debug, diagnose)" ;;
 esac

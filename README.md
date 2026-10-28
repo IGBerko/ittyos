@@ -44,7 +44,7 @@ machine needs network access; it restarts once when everything is done. Only XFC
 On an installed system (as root, with network access):
 
     ittyos-desktop            # XFCE + notifications (wraps setup-desktop xfce)
-    ittyos-disk               # disk manager like diskpart: list, create partitions, format
+    diskcat               # disk manager like diskpart: list, create partitions, format
     ittyos-update             # branding and the latest ittyOS files from GitHub (curl, no git)
     ittyos-wallpaper          # inside the XFCE session, for an already existing profile
 
@@ -62,7 +62,7 @@ Without a notification daemon the tray notice cannot be shown: `flowkit -i xfce4
 
 ## Disk manager
 
-`sudo ittyos-disk` is a small diskpart-like tool:
+`sudo diskcat` is a small diskpart-like tool:
 
     list disk
     select disk 1
@@ -72,7 +72,7 @@ Without a notification daemon the tray notice cannot be shown: `flowkit -i xfce4
     format fs=ext4 label=DATA
     list partition
 
-`ittyos-disk -s commands.txt -y` runs the same commands from a file without questions.
+`diskcat -s commands.txt -y` runs the same commands from a file without questions.
 
 ## lsl - Linux Subsystem for Linux
 

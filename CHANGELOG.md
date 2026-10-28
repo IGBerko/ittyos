@@ -7,7 +7,7 @@
 - **Plymouth start rewritten**: the splash service now loads the graphics drivers of virtual machines
   (simpledrm, vmwgfx, vboxvideo, virtio_gpu, bochs, cirrus), waits up to 10 s for `/dev/fb0` or
   `/dev/dri/card0`, waits until the daemon answers before showing the splash, and writes what it did to
-  `/var/log/ittyos-splash.log` and `/var/log/ittyos-plymouth.log` on every boot. `ittyos-splash status`
+  `/var/log/ittyos-splash.log` on every boot (the detailed `/var/log/ittyos-plymouth.log` only after `ittyos-splash debug on`). `ittyos-splash status`
   shows the last lines of that log.
 - **`lsl`** - Linux Subsystem for Linux, a WSL-style tool. `sudo lsl pull NAME` downloads an image from
   github.com/IGBerko/lsl (an `index.txt` list, or the repository folder listing as a fallback;
@@ -18,18 +18,18 @@
   stored in `/var/lib/lsl/distros/NAME/rootfs`; `sudo lsl run NAME [command]` mounts /dev /proc /sys and
   does a `chroot`. Also `lsl list`, `info`, `default`, `remove`. It is a chroot, not a container: no init
   system, shared processes and network.
-- **`ittyos-disk`**: a disk manager in the style of Windows `diskpart`. `list disk|partition|volume`,
+- **`diskcat`**: a disk manager in the style of Windows `diskpart`. `list disk|partition|volume`,
   `select disk N`, `select partition N`, `detail`, `create partition [size=2G] [type=...]`,
   `delete partition`, `format fs=ext4|fat32|exfat|ntfs|xfs|btrfs|swap [label=NAME]`, `clean`,
   `convert gpt|mbr`, `mount`/`unmount`. Destructive commands ask for `YES`; a disk with mounted
-  partitions is never changed. `ittyos-disk -s file` runs a script, `-y` skips the questions.
+  partitions is never changed. `diskcat -s file` runs a script, `-y` skips the questions.
   Missing mkfs tools are installed on demand. Included in the installer's copy list.
 - Installer: when the installation fails, the reason and the last log lines are printed on
   the console and the reason is written to the log. `sfdisk` and `util-linux` are installed on
   the new system.
 - Plymouth diagnostics: `ittyos-splash status` shows the plugin, theme, display device, daemon and
   `quiet` state; `ittyos-splash test` shows the splash for a few seconds with a debug log;
-  `ittyos-splash debug` writes `/var/log/ittyos-plymouth.log` on the next boot. The splash service
+  `ittyos-splash debug on` + `diagnose` write and summarise a detailed log. The splash service
   now waits briefly for the graphics device (`/dev/fb0` or `/dev/dri/card0`).
 
 ## 1.0.5
