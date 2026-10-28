@@ -54,9 +54,12 @@ ensure_tool() { # tool package
 	command -v "$1" >/dev/null 2>&1 || die "$1 is still missing after installing $2"
 }
 
+# Downloads use curl, or wget when curl is not installed. No git is needed.
 fetch() { # url output
 	if command -v curl >/dev/null 2>&1 || [ -n "${LSL_CURL:-}" ]; then
 		if [ -n "${LSL_QUIET:-}" ]; then ${LSL_CURL:-curl} -fsSL --retry 3 -C - -o "$2" "$1"; else ${LSL_CURL:-curl} -fL --retry 3 -C - -# -o "$2" "$1"; fi
+	elif command -v wget >/dev/null 2>&1; then
+		wget -c -O "$2" "$1"
 	else
 		ensure_tool curl curl
 		curl -fL --retry 3 -C - -# -o "$2" "$1"
@@ -64,7 +67,11 @@ fetch() { # url output
 }
 
 fetch_text() { # url -> stdout
-	${LSL_CURL:-curl} -fsSL --retry 2 "$1" 2>/dev/null
+	if command -v curl >/dev/null 2>&1 || [ -n "${LSL_CURL:-}" ]; then
+		${LSL_CURL:-curl} -fsSL --retry 2 "$1" 2>/dev/null
+	elif command -v wget >/dev/null 2>&1; then
+		wget -qO- "$1" 2>/dev/null
+	fi
 }
 
 # ---------- remote index ----------
