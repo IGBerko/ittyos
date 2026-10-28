@@ -86,5 +86,5 @@ finds none it unpacks the initramfs and uses that. It is a chroot: there is no i
 network and processes are shared with ittyOS.
 
 Repository layout (github.com/IGBerko/lsl): either an `index.txt` in the root with lines
-`name path [sha256]`, or one folder per distribution with an image inside. Plain git files are
+`name path-or-URL [sha256]` (a URL may point to a GitHub Release asset, up to 2 GB per file), or one folder per distribution with an image inside. Plain git files are
 limited to 100 MB, so bigger images need Git LFS (supported) or GitHub Releases (use `lsl import NAME URL`).

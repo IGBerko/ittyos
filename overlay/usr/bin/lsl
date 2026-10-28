@@ -76,7 +76,8 @@ fetch_text() { # url -> stdout
 
 # ---------- remote index ----------
 # Result lines: NAME<TAB>PATH<TAB>SIZE<TAB>SHA256
-# Preferred: index.txt in the repository root, lines "name path [sha256] [description]".
+# Preferred: index.txt in the repository root, lines "name path-or-URL [sha256]".
+# A URL (for example a GitHub Release asset) is downloaded as it is; a path comes from the repository.
 # Otherwise the repository is listed through the GitHub API (folders = distributions).
 
 api_list() { # path-or-empty -> "name path size type" lines
@@ -385,7 +386,11 @@ cmd_pull() {
 	mkdir -p "$CACHE"
 	out="$CACHE/${p##*/}"
 	info "downloading $p"
-	fetch "$LSL_RAW/$p" "$out" || { rm -f "$out"; die "download failed"; }
+	case "$p" in
+		http://*|https://*) url=$p ;;      # a link, e.g. a GitHub Release asset
+		*) url="$LSL_RAW/$p" ;;
+	esac
+	fetch "$url" "$out" || { rm -f "$out"; die "download failed"; }
 	# Git LFS pointer instead of the real file: take it from the media server
 	if [ "$(wc -c < "$out")" -lt 1024 ] && head -c 40 "$out" | grep -q 'git-lfs'; then
 		info "file is stored in Git LFS: downloading the real content"
